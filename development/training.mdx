@@ -1,0 +1,114 @@
+---
+title: "Training and Exporting the SuperCompress Checkpoint"
+sidebarTitle: "Training"
+description: "Re-train the ~5K-param EvictionPolicyNetwork, export weights for the browser demo, and regenerate benchmarks and charts."
+---
+
+SuperCompress ships with a pretrained checkpoint at `checkpoints/default.pt` so you can run compression immediately after install. When you want to experiment with the eviction policy itself — tweaking the training data, the network architecture, or the feature set — you can re-train the `EvictionPolicyNetwork` from scratch. The model is deliberately small (~5K parameters) so a fast training run completes in around 30 seconds on CPU.
+
+## CLI training commands
+
+The `supercompress` CLI exposes a `train` subcommand. By default it runs the fast mode; pass `--full` for a longer training run:
+
+```bash
+# Fast training (default) — ~40 epochs, completes in ~30 s
+supercompress train
+
+# Equivalent direct entrypoint
+supercompress-train --fast
+
+# Full training run — 200 epochs
+supercompress train --full
+
+# Equivalent direct entrypoint (no --fast flag = full run)
+supercompress-train
+```
+
+<Tip>
+  The `--fast` flag uses 40 epochs with batches of 8 synthetic contexts. The full run uses 200 epochs with batches of 16. Both use the same `AdamW` optimizer at `lr=1e-3` and `BCEWithLogitsLoss`.
+</Tip>
+
+## What the train script does
+
+`scripts/train_checkpoint.py` runs the full training loop without any external dataset:
+
+<Steps>
+  <Step title="Generate synthetic training data">
+    `generate_long_context()` from `supercompress.simulator` produces varied context blocks (200–500 tokens each) paired with questions. `build_token_records()` labels each line as oracle-important or not.
+  </Step>
+  <Step title="Build feature tensors">
+    `build_feature_tensor()` from `supercompress.features` converts each labeled record into a fixed-length feature vector of dimension `FEATURE_DIM`. Sequences are zero-padded to the batch maximum.
+  </Step>
+  <Step title="Train the network">
+    `EvictionPolicyNetwork` (a small MLP with `hidden_dim=64`) is optimised with `AdamW`. Loss is `BCEWithLogitsLoss` applied only to non-padded positions via a mask, then averaged.
+  </Step>
+  <Step title="Save the checkpoint">
+    The final `state_dict` is written to `checkpoints/default.pt`. The directory is created automatically if it does not exist.
+
+    ```
+    epoch 10/40  loss=0.6423
+    epoch 20/40  loss=0.5891
+    …
+    Saved checkpoint: /path/to/supercompress/checkpoints/default.pt
+    ```
+  </Step>
+</Steps>
+
+## Export model weights for the browser demo
+
+The browser playground at `web/index.html` runs inference entirely client-side using the serialised model weights. After training, export them to JSON:
+
+```bash
+python scripts/export_model_json.py
+# Writes web/assets/data/model.json
+```
+
+The script loads `checkpoints/default.pt`, iterates the `EvictionPolicyNetwork` layers, and serialises each `Linear` and `LayerNorm` as plain JSON arrays. The output includes `feature_dim`, `hidden_dim`, `layers`, and `policy_name`.
+
+<Note>
+  `export_model_json.py` will exit with an error if `checkpoints/default.pt` does not exist. Run `supercompress train` first if you have deleted or never generated the checkpoint.
+</Note>
+
+## Run the policy demo
+
+The `demo` subcommand runs `examples/demo_compare.py`, which prints a side-by-side comparison of FIFO truncation and SuperCompress on a demonstration context:
+
+```bash
+supercompress demo
+```
+
+This is the same scenario used in the README benchmark table and a good sanity check after re-training.
+
+## Regenerate benchmarks and charts
+
+The JSON data files and SVG charts consumed by the landing page can be regenerated with two scripts:
+
+```bash
+# Regenerate benchmark data (8 seeds, budget 0.35, all policies)
+python scripts/benchmark_web.py    # → web/assets/data/benchmarks.json
+
+# Regenerate SVG charts
+python scripts/generate_charts.py  # → web/assets/img/*.svg
+```
+
+The benchmark script runs all five policies (FIFO, Truncation, Summarization, H2O, SuperCompress) across 8 random seeds and writes the results to `web/assets/data/benchmarks.json`. The chart script reads that file and writes `chart-kv-savings.svg`, `chart-oracle-recall.svg`, and `chart-impact.svg`.
+
+## Running tests
+
+```bash
+pytest tests/ -q
+```
+
+The 52-test suite covers:
+
+| Suite | What it tests |
+|---|---|
+| `test_supercompress.py` | Core `compress_context`, `compare_policies`, `CompressResult` |
+| `test_api_hard.py` | Hard API validation edge cases |
+| `test_api_keys.py` | Key generation and hashing |
+| `test_api_server.py` | FastAPI routes |
+| `test_local_server.py` | Full local server integration (requires `[serve]`) |
+
+<Info>
+  `test_local_server.py` spins up the full FastAPI application using `httpx.AsyncClient`. It requires the `serve` extra (`pip install -e ".[serve]"`); it is skipped automatically if that extra is absent.
+</Info>

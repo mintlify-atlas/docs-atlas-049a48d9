@@ -1,20 +1,80 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "SuperCompress: Learned Context Compression for LLMs"
+sidebarTitle: "Home"
+description: "SuperCompress trims long LLM context with a learned eviction policy — 100% oracle recall at 35% token budget, sub-millisecond CPU overhead, documented environmental impact."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+SuperCompress is a Python library that compresses long agent context before every LLM call. Instead of blindly truncating from the head or tail, SuperCompress uses a lightweight ~5K-parameter eviction policy to retain the tokens most relevant to your current query — including answer-bearing lines in the middle of long documents that naive truncation drops entirely.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get from install to your first compressed context in under five minutes.
+  </Card>
+  <Card title="How It Works" icon="brain" href="/concepts/how-it-works">
+    Understand the learned eviction pipeline and why it beats truncation.
+  </Card>
+  <Card title="Python API Reference" icon="code" href="/api-reference/compress-context">
+    Full signatures for `compress_context`, `compress_for_turn`, and every public export.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/guides/integrations">
+    Wire SuperCompress into OpenAI messages, LangChain agents, or any HTTP client.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## Why SuperCompress?
+
+Long agent context is expensive. Every token in the KV cache costs GPU prefill time. Truncation keeps the head and tail but silently drops answers buried in the middle. SuperCompress learns **which lines to keep** for the current question — under a fixed token budget.
+
+| Metric | SuperCompress | Truncation / FIFO |
+|--------|---------------|-------------------|
+| KV savings @ 35% budget | ~65% | ~65% |
+| Oracle recall | **100%** | ~25% |
+| Policy size | ~5K params | rule-based |
+| Runs on | **CPU** (pre-inference) | CPU |
+
+<Steps>
+  <Step title="Install">
+    ```bash
+    pip install git+https://github.com/arjunkshah/supercompress.git
+    ```
+  </Step>
+  <Step title="Compress your context">
+    ```python
+    from supercompress import compress_context
+
+    result = compress_context(
+        "long context text…",
+        "What does fetch return when the row is missing?",
+        budget_ratio=0.35,
+    )
+    print(result.compressed_text)
+    print(f"{result.kv_savings_pct:.1f}% KV saved · {result.kept_tokens}/{result.original_tokens} tokens")
+    ```
+  </Step>
+  <Step title="Pass the result to your LLM">
+    Use `result.compressed_text` wherever you'd pass your original context — it's a plain string.
+  </Step>
+</Steps>
+
+## Explore the docs
+
+<CardGroup cols={3}>
+  <Card title="Eviction Policies" icon="filter" href="/concepts/eviction-policies">
+    FIFO, Truncation, H2O, Summarization, and the learned SuperCompress policy explained.
+  </Card>
+  <Card title="Benchmarks" icon="chart-bar" href="/concepts/benchmarks">
+    Reproducible benchmark results across 8 seeds — oracle recall, entity recall, latency.
+  </Card>
+  <Card title="Environmental Impact" icon="leaf" href="/guides/environment">
+    How tokens saved translates to GPU-seconds, Wh, and CO₂ with documented assumptions.
+  </Card>
+  <Card title="API Dashboard" icon="key" href="/guides/api-dashboard">
+    Firebase auth, API key management, and per-key usage tracking for the hosted API.
+  </Card>
+  <Card title="Local Server" icon="server" href="/development/local-server">
+    Run the FastAPI server locally for development and integration testing.
+  </Card>
+  <Card title="HTTP API" icon="globe" href="/api-reference/http-overview">
+    REST endpoints for the hosted compress service with API key authentication.
+  </Card>
+</CardGroup>

@@ -1,47 +1,104 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with SuperCompress"
+sidebarTitle: "Quickstart"
+description: "Install SuperCompress and compress your first LLM context in minutes — one function call, no API key required, runs entirely on CPU."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+SuperCompress is designed to slot into any Python LLM workflow with a single function call. This guide walks you from a fresh install to a working compression pipeline, and then shows you exactly why naive truncation fails on real agent context — and how SuperCompress handles it.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Install SuperCompress">
+    Install directly from GitHub using pip. No PyPI release is required.
 
     ```bash
-    npm install your-package
+    pip install git+https://github.com/arjunkshah/supercompress.git
     ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
+    This pulls in the core library along with its two dependencies (`torch>=2.0.0` and `numpy>=1.24.0`) and includes the pretrained checkpoint at `checkpoints/default.pt`. See the [Installation guide](/installation) for optional extras like the dev tools and local HTTP server.
+  </Step>
+
+  <Step title="Compress your context">
+    Import `compress_context` and pass it your context string, the current user query, and a `budget_ratio` representing the fraction of tokens to keep.
+
+    ```python
+    from supercompress import compress_context
+
+    result = compress_context(
+        "long context text…",
+        "What does fetch return when the row is missing?",
+        budget_ratio=0.35,
+    )
     ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
+    SuperCompress loads the bundled checkpoint automatically. If the checkpoint is not found it falls back to the `H2OPolicy` baseline so the call never raises unexpectedly.
+  </Step>
+
+  <Step title="Read the result">
+    `compress_context` returns a `CompressResult` dataclass. The fields you'll use most often are:
+
+    ```python
+    # The trimmed context — pass this to your LLM
+    print(result.compressed_text)
+
+    # How much KV cache you saved (e.g. 65.0)
+    print(f"{result.kv_savings_pct:.1f}% KV saved")
+
+    # Token counts before and after
+    print(f"{result.kept_tokens}/{result.original_tokens} tokens kept")
+    ```
+
+    The full `CompressResult` also exposes `compression_ratio`, `kept_line_ratio`, `policy_name`, `budget_ratio`, and the original `question` used for scoring.
+  </Step>
+
+  <Step title="Pass to your LLM">
+    Swap `result.compressed_text` in wherever you would have passed the original context — the format is identical, just shorter.
+
+    ```python
+    import openai
+
+    client = openai.OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": result.compressed_text},
+            {"role": "user", "content": result.question},
+        ],
+    )
     ```
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## See why truncation fails
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+The `middle_truncation_failure_case()` helper builds a synthetic context where a critical answer is buried 180 lines deep — exactly where head-and-tail truncation will always drop it. Running `compare_policies()` on it shows the difference at a glance.
+
+```python
+from supercompress import middle_truncation_failure_case, compare_policies
+
+context, question = middle_truncation_failure_case()
+# context contains 180 filler lines, then:
+#   CRITICAL_ANSWER = "404 when row is missing — User.fetch returns None"
+# then 40 bridge lines and 15 tail lines.
+
+results = compare_policies(context, question, budget_ratio=0.35)
+
+for name, r in results.items():
+    answer_kept = "CRITICAL_ANSWER" in r.compressed_text
+    print(f"{name:>16}  kept={r.kept_tokens:>4}/{r.original_tokens}  answer={'✓' if answer_kept else '✗'}")
+```
+
+Expected output (results will vary slightly by seed):
+
+```
+            FIFO  kept= 84/240  answer=✗
+      Truncation  kept= 84/240  answer=✗
+   Summarization  kept= 84/240  answer=✓
+             H2O  kept= 84/240  answer=✓
+   SuperCompress  kept= 84/240  answer=✓
+```
+
+`compare_policies()` runs all five policies — FIFO, Truncation, Summarization, H2O, and SuperCompress — over the same context and returns a `dict[str, CompressResult]` so you can benchmark them side by side on your own data too.
+
+<Tip>
+  The default `budget_ratio` of `0.35` keeps 35% of the original tokens. This is the value used in all published benchmarks. You can lower it for more aggressive compression or raise it toward `1.0` to preserve more context — just note that `budget_ratio` must be in the range `(0, 1]` or `compress_context` will raise a `ValueError`.
 </Tip>

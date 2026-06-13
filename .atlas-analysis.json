@@ -1,0 +1,105 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "SuperCompress",
+  "projectDescription": "A Python library that compresses long LLM context using a learned token eviction policy — smaller prompts, retained answer quality, and documented environmental impact.",
+  "theme": "luma",
+  "primaryColor": "#1c4cdb",
+  "lightColor": "#94c4fc",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/how-it-works",
+              "concepts/eviction-policies",
+              "concepts/benchmarks"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/integrations",
+              "guides/api-dashboard",
+              "guides/environment"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/local-server",
+              "development/training",
+              "development/contributing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Python API",
+            "pages": [
+              "api-reference/compress-context",
+              "api-reference/compress-for-turn",
+              "api-reference/compare-policies",
+              "api-reference/compress-detailed",
+              "api-reference/types"
+            ]
+          },
+          {
+            "group": "HTTP API",
+            "pages": [
+              "api-reference/http-overview",
+              "api-reference/http-compress",
+              "api-reference/http-keys"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Learned ~5K-parameter MLP eviction policy that outperforms truncation on oracle recall",
+    "100% oracle recall at 35% token budget — retains answer-bearing lines missed by head/tail truncation",
+    "In-process CPU inference — sub-millisecond overhead before LLM call",
+    "Multiple baseline policies (FIFO, Truncation, H2O, Summarization) for comparison",
+    "Documented environmental impact — tokens saved → GPU-seconds → Wh → CO₂",
+    "Hosted API with Firebase auth, API key management, and per-key usage tracking",
+    "Browser-portable model via compress-engine.js for client-side demos",
+    "Integrations for OpenAI messages, LangChain history, raw pipelines, and curl"
+  ],
+  "publicApiSurface": [
+    "compress_context(text, question, budget_ratio, policy, checkpoint) -> CompressResult",
+    "compress_for_turn(context_blocks, user_query, budget_ratio) -> (str, CompressResult)",
+    "compare_policies(text, question, budget_ratio, checkpoint) -> dict[str, CompressResult]",
+    "compress_detailed(text, question, budget_ratio, policy, checkpoint) -> (CompressResult, List[LineAnnotation])",
+    "middle_truncation_failure_case() -> (str, str)",
+    "CompressResult dataclass (compressed_text, original_tokens, kept_tokens, kv_savings_pct, compression_ratio, policy_name, budget_ratio, kept_line_ratio, question)",
+    "LineAnnotation dataclass (line_index, text, kept, reason)",
+    "sustainability_from_tokens_saved(tokens_saved, assumptions) -> SustainabilityEstimate",
+    "EvictionPolicy ABC (FIFO, TruncationPolicy, H2OPolicy, SummarizationPolicy, LearnedPolicy, OraclePolicy)",
+    "POST /v1/compress — authenticated compress endpoint (X-API-Key: sc_live_...)",
+    "GET /api/keys — list API keys (Firebase ID token)",
+    "POST /api/keys — create API key",
+    "PATCH /api/keys/{id} — rename key",
+    "DELETE /api/keys/{id} — revoke key",
+    "GET /api/keys/{id}/usage — per-key usage stats",
+    "GET /api/me — current authenticated user",
+    "POST /api/compress — unauthenticated playground endpoint",
+    "GET /api/health — health check",
+    "supercompress train [--full] — CLI to train checkpoint",
+    "supercompress demo — CLI policy comparison demo"
+  ]
+}

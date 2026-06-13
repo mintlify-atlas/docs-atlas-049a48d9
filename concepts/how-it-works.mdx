@@ -1,0 +1,98 @@
+---
+title: "How SuperCompress Compresses LLM Context"
+sidebarTitle: "How It Works"
+description: "A technical walkthrough of SuperCompress's learned KV eviction pipeline — from tokenization and feature extraction to budget-constrained token selection."
+---
+
+SuperCompress reduces the token count of a long context before it ever reaches your LLM. Rather than blindly chopping text from the middle or end of a prompt, it runs a lightweight CPU-side policy that scores every token for relevance to the current question, then reconstructs a compressed prompt from only the tokens worth keeping. The entire process adds sub-millisecond overhead while saving significant GPU prefill compute.
+
+## The Compression Pipeline
+
+<Steps>
+  <Step title="Tokenize + Feature Extraction (CPU)">
+    The raw context string is split into lines, then each line is tokenized with a simple whitespace-and-punctuation splitter. For every token, `build_inference_records` in `local.py` builds a `TokenRecord` containing a **9-dimensional feature vector**:
+
+    | Dim | Feature |
+    |-----|---------|
+    | 0 | `attention_mass` — synthesized attention weight for this token |
+    | 1 | `layer_attention_mean` — mean attention across simulated layers |
+    | 2 | `recency` — normalized position (`1 - age / seq_len`) |
+    | 3 | `question_entity_match` — 1.0 if token appears in extracted question entities |
+    | 4–7 | Semantic type one-hot: `CODE`, `COMMENT`, `CHAT`, `BOILERPLATE` |
+
+    This stage runs entirely on CPU with no HuggingFace model download required.
+  </Step>
+
+  <Step title="Eviction Policy Scores Each Token">
+    The chosen `EvictionPolicy` receives the list of `TokenRecord` objects and a token budget. For `LearnedPolicy`, `build_feature_tensor` assembles the 9-dim features into a `torch.Tensor`, and the ~5K-parameter `EvictionPolicyNetwork` MLP produces a sigmoid keep-score for each token. Other policies (FIFO, H2O, Truncation, Summarization) derive scores directly from the `TokenRecord` metadata fields without invoking the neural network.
+  </Step>
+
+  <Step title="Budget-Constrained Token Selection">
+    The policy selects at most `budget` tokens to retain, where:
+
+    ```python
+    budget = max(16, int(n * budget_ratio))
+    ```
+
+    `n` is the total token count and `budget_ratio` defaults to `0.35`. The policy returns a sorted list of token position indices. Regardless of which policy is active, **the first 2 lines are always treated as attention sinks** and the **last 8 lines are preserved as recent context** — see [Attention Sinks and Recent Context](#attention-sinks-and-recent-context) below.
+  </Step>
+
+  <Step title="Reconstruct Kept Lines → Compressed Text">
+    SuperCompress works at **line granularity** for reconstruction. Every kept token index maps back to its source line via the `line_for_token` index built during tokenization. All lines that contain at least one kept token are included in the output, joined with newlines. This preserves syntactic coherence — you never get half a function signature or a broken code block.
+  </Step>
+
+  <Step title="Pass compressed_text to Your LLM">
+    The public API returns a `CompressResult` object. Drop `compressed_text` straight into your LLM call:
+
+    ```python
+    from supercompress import compress_context
+
+    result = compress_context(
+        long_context,
+        "What does fetch return when the row is missing?",
+        budget_ratio=0.35,
+    )
+
+    # result.compressed_text  → trimmed prompt ready for your LLM
+    # result.kv_savings_pct   → e.g. 65.0
+    # result.kept_tokens      → e.g. 210
+    # result.original_tokens  → e.g. 600
+    response = llm.chat(result.compressed_text)
+    ```
+  </Step>
+</Steps>
+
+## Module Breakdown
+
+| Module | Role |
+|--------|------|
+| `local.py` | Builds `TokenRecord` list from raw text and question entities — no GPU, no HuggingFace download |
+| `features.py` | Computes the 9-dim per-token feature vector and `SemanticType` classification |
+| `model.py` | Defines `EvictionPolicyNetwork`, the ~5K-parameter MLP that outputs keep scores |
+| `policies.py` | All eviction policies: `FIFO`, `LRU`, `SlidingWindow`, `TruncationPolicy`, `SummarizationPolicy`, `H2OPolicy`, `LearnedPolicy`, `AttentionHeuristicPolicy`, `SnapKVPolicy`, `OraclePolicy` |
+| `compress.py` | Public API — `compress_context()`, `compare_policies()` |
+| `benchmarks/` | Quality metrics (`oracle_recall`, `entity_recall`, `answer_quality_score`) and sustainability estimates |
+
+## Attention Sinks and Recent Context
+
+LLM attention heads disproportionately attend to the very first tokens of a sequence regardless of semantic content — these are called **attention sinks**. Evicting them causes a measurable quality drop even when they carry little information. SuperCompress always protects the **first 2 lines** of the context from eviction for this reason.
+
+Similarly, the **last 8 lines** are always retained because they typically contain the most recent and task-relevant content — in agentic contexts this is often the most recent tool output or turn.
+
+<Note>
+  These constants are enforced at the reconstruction layer, not inside individual policy `select()` methods. Every policy benefits from them automatically.
+</Note>
+
+## Why CPU Pre-Inference Eviction Works
+
+The feature extraction and policy scoring steps run in **under 1 ms on CPU** for typical contexts (600–1 000 tokens). Compare that to the GPU prefill cost: at 150 W and 2 500 tokens/GPU-second, a 600-token prompt spends ~240 ms just in the KV-cache prefill phase. Cutting 65% of those tokens saves ~156 ms of GPU time per call — a 100× return on the CPU overhead spent scoring.
+
+<Info>
+  SuperCompress attributes **55% of prefill compute to KV context** when estimating savings. See [ARCHITECTURE.md](https://github.com/arjunkshah/supercompress/blob/main/ARCHITECTURE.md) and [docs/ENVIRONMENT.md](https://github.com/arjunkshah/supercompress/blob/main/docs/ENVIRONMENT.md) for the full assumptions.
+</Info>
+
+## Why Head+Tail Truncation Fails
+
+Standard "truncation" keeps the first few tokens (attention sinks) and the most recent tokens, discarding everything in the middle. In long agentic contexts the answer to the current question is frequently buried in the middle of the context — perhaps a function definition from 40 turns ago, or a database schema described early in the session.
+
+Head+tail truncation achieves only ~25% oracle recall in SuperCompress's benchmarks: it correctly retains only 1 in 4 tokens that are actually needed to answer the question. The learned policy, by contrast, explicitly scores every token's relevance against the current question using the `question_entity_match` feature, achieving **100% oracle recall** at the same 35% token budget. The difference is not architectural complexity — the MLP has ~5K parameters — it is simply that the model has been trained to recognize which tokens are answer-bearing for a given query.

@@ -1,0 +1,49 @@
+---
+title: "SuperCompress: Learned Context Compression for LLMs"
+sidebarTitle: "Introduction"
+description: "SuperCompress is a Python library that trims long LLM prompts with a learned eviction policy — preserving answer quality while cutting KV costs by ~65%."
+---
+
+SuperCompress is a Python library for learned context compression. Before each LLM inference call, it uses a small (~5K-parameter) CPU policy to decide which lines of your agent's context are worth keeping under a fixed token budget — and which can be safely dropped. The result is a shorter prompt that fits in less KV cache, costs less to process, and still contains the information your model needs to answer correctly.
+
+## The problem with naive truncation
+
+The standard approach to fitting a long context into a token budget is to keep the head and tail and throw away whatever is in the middle. This is fast, but it has a fundamental flaw: the answer to the current question is often **in the middle**. A retrieval log, a previous tool response, or a computed value buried between padding lines will be silently removed, and the model will hallucinate or refuse rather than answer.
+
+SuperCompress solves this by treating eviction as a learned ranking problem. Given the current user query, it scores every line of context for relevance and retains the highest-scoring lines within the budget — so a critical `CRITICAL_ANSWER = "404 when row is missing"` buried 180 lines deep survives compression while irrelevant filler is discarded.
+
+## Benchmark results
+
+The table below compares SuperCompress against standard baselines at a 35% token budget (8 seeds):
+
+| Policy | Oracle recall | Entity recall | KV savings | Policy size |
+|---|---|---|---|---|
+| Truncation / FIFO | 25% | 73% | ~65% | rule-based |
+| Summarization | 61% | 65% | ~65% | rule-based |
+| H2O | 98% | 73% | ~65% | rule-based |
+| **SuperCompress** | **100%** | **73%** | **~65%** | **~5K params** |
+
+SuperCompress achieves 100% oracle recall — meaning it never loses the answer line — while matching the KV savings of every other approach. The policy runs entirely on CPU before inference, adding roughly 60 ms of overhead.
+
+At 1 million compressions (estimated): **~800M tokens avoided · 29 kWh · 12 kg CO₂ saved**. See `docs/ENVIRONMENT.md` for the full methodology.
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Install SuperCompress and run your first compression in under five minutes.
+  </Card>
+  <Card title="How It Works" icon="brain" href="/concepts/how-it-works">
+    Understand the learned eviction policy, token budgets, and the sink-and-recent heuristic.
+  </Card>
+  <Card title="Eviction Policies" icon="sliders" href="/concepts/eviction-policies">
+    Compare FIFO, Truncation, Summarization, H2O, and the SuperCompress learned policy.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/guides/integrations">
+    Drop SuperCompress into OpenAI, LangChain, and LlamaIndex pipelines.
+  </Card>
+</CardGroup>
+
+<Note>
+  SuperCompress is released under the **MIT License**. You are free to use, modify, and distribute it in personal and commercial projects. See the `LICENSE` file in the repository root for the full text.
+</Note>

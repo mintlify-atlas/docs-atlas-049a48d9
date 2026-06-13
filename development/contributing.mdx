@@ -1,0 +1,120 @@
+---
+title: "Contributing to SuperCompress"
+sidebarTitle: "Contributing"
+description: "Set up a local dev environment, run the 52-test suite, lint with Ruff, and learn how the codebase is organised before sending a PR."
+---
+
+Contributions to SuperCompress are welcome — bug fixes, new baseline policies, improved training data, documentation updates, or anything else that improves the library. The project uses `pytest` for testing and `ruff` for linting, both of which run automatically in CI on every push and pull request.
+
+## Dev environment setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/arjunkshah/supercompress.git
+    cd supercompress
+    ```
+  </Step>
+  <Step title="Install all development dependencies">
+    The `dev` extra adds `pytest`, `ruff`, and `httpx`. The `serve` extra adds FastAPI and Uvicorn, which are required for `test_local_server.py`.
+
+    ```bash
+    pip install -e ".[dev,serve]"
+    ```
+  </Step>
+  <Step title="Verify the test suite passes">
+    All 52 tests should pass on a clean checkout:
+
+    ```bash
+    pytest tests/ -q
+    ```
+
+    Expected output ends with something like:
+
+    ```
+    52 passed in 3.14s
+    ```
+  </Step>
+  <Step title="Run the linter">
+    ```bash
+    ruff check .
+    ```
+
+    Ruff is configured to check `supercompress/`, `tests/`, and `scripts/`. A clean pass produces no output.
+  </Step>
+</Steps>
+
+## Project layout
+
+| Path | Description |
+|---|---|
+| `supercompress/` | Core library — ~5K-param eviction policy, baselines, features, simulator |
+| `supercompress/api/` | Hosted API layer — key management, Firebase auth, usage tracking |
+| `web/` | Static landing page, browser demo, and dashboard |
+| `scripts/` | `benchmark_web.py`, `local_web_server.py`, `export_model_json.py`, `generate_charts.py` |
+| `tests/` | `test_supercompress`, `test_api_hard`, `test_api_keys`, `test_api_server`, `test_local_server` |
+| `checkpoints/default.pt` | Trained weights (included in the repo) |
+| `docs/` | API reference, integrations, environment impact, dashboard guide |
+
+## Test suites
+
+| File | Coverage |
+|---|---|
+| `test_supercompress.py` | Core `compress_context`, `compare_policies`, `CompressResult` fields, oracle recall, edge cases |
+| `test_api_hard.py` | Hard validation edge cases — invalid `budget_ratio`, oversized payloads, malformed JSON |
+| `test_api_keys.py` | API key generation format (`sc_live_…`), hashing, and equality checks |
+| `test_api_server.py` | FastAPI route behaviour — status codes, response schema, authentication |
+| `test_local_server.py` | Full integration tests for the local dev server using `httpx.AsyncClient` |
+
+<Note>
+  `test_local_server.py` requires the `serve` extra. If you install only `.[dev]`, those tests are automatically skipped — this is expected behaviour, not a failure.
+</Note>
+
+## Linting and code style
+
+SuperCompress uses [Ruff](https://docs.astral.sh/ruff/) with the following configuration from `pyproject.toml`:
+
+```toml
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+```
+
+This enforces PEP 8 errors (`E`), Pyflakes (`F`), import ordering (`I`), and pycodestyle warnings (`W`). The `scripts/` directory has `E402` (module-level import not at top of file) suppressed because the scripts manually prepend the repo root to `sys.path`.
+
+<Tip>
+  Run `ruff check --fix .` to auto-fix import ordering and other safe issues before committing.
+</Tip>
+
+## CI/CD
+
+GitHub Actions runs the full CI pipeline on every push to `main` and on every pull request targeting `main`. The workflow matrix tests Python **3.11** and **3.12**.
+
+Each CI run executes the following steps in order:
+
+1. **Install** — `pip install -e ".[dev,serve]"` and `pip install ruff`
+2. **Ruff** — `ruff check supercompress tests scripts`
+3. **Export browser model** — `python scripts/export_model_json.py`
+4. **Pytest** — `pytest tests/ -q`
+5. **Benchmark JSON** — `python scripts/benchmark_web.py`
+6. **Verify web assets** — asserts that `model.json`, `benchmarks.json`, `compress-engine.js`, `chart-kv-savings.svg`, `chart-impact.svg`, and `launch.mp4` all exist under `web/assets/`
+
+<Info>
+  CI does not run `generate_charts.py` because SVG generation depends on matplotlib and the chart files are committed to the repository. The verify step only checks that the committed files are present.
+</Info>
+
+## Submitting a pull request
+
+Before opening a PR, confirm that:
+
+- `pytest tests/ -q` shows **52 passed** (or more if you have added tests)
+- `ruff check .` exits with no errors
+- Any new public function is documented in `docs/API.md`
+- If you retrained the checkpoint, `python scripts/export_model_json.py` succeeds and you have committed the updated `web/assets/data/model.json`
+
+## License
+
+SuperCompress is released under the **MIT License**. By contributing you agree that your changes will be distributed under the same terms.

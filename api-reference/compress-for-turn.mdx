@@ -1,0 +1,71 @@
+---
+title: "compress_for_turn() — Merge and Compress Context Blocks"
+sidebarTitle: "compress_for_turn"
+description: "Merge multiple context sources — system prompt, tool output, chat history — into one compressed string before each LLM inference turn."
+---
+
+`compress_for_turn` is designed for the common agent pattern where a single LLM turn is assembled from several independent context sources: a system prompt, one or more tool outputs, retrieved documents, and an ongoing chat history. Rather than requiring you to concatenate those blocks yourself, `compress_for_turn` accepts them as a list and handles the merge-then-compress pipeline in one call. Use this function whenever your context is naturally partitioned into labelled sections that you would otherwise manually join before sending to `compress_context`.
+
+## Function signature
+
+```python
+from supercompress import compress_for_turn
+
+compressed_text, result = compress_for_turn(
+    context_blocks: List[str],
+    user_query: str,
+    budget_ratio: float = 0.35,
+) -> tuple[str, CompressResult]
+```
+
+## Parameters
+
+<ParamField path="context_blocks" type="List[str]" required>
+  An ordered list of context strings. Each element can be any length. Empty strings and whitespace-only strings are silently skipped before merging, so it is safe to include optional blocks that may be empty at runtime.
+</ParamField>
+
+<ParamField path="user_query" type="str" required>
+  The current user message for this turn. Passed directly to the underlying `compress_context` call to drive token relevance scoring — tokens semantically related to this query are more likely to be retained.
+</ParamField>
+
+<ParamField path="budget_ratio" type="float" default="0.35">
+  Token retention fraction in `(0, 1]`. Forwarded unchanged to `compress_context`. A value of `0.35` retains 35 % of the merged token count.
+</ParamField>
+
+## How blocks are merged
+
+After filtering out empty strings, the remaining blocks are joined with the separator `"\n\n---\n\n"`. The resulting merged string is then passed to [`compress_context`](/api-reference/compress-context) with the same `user_query` and `budget_ratio`. The `---` separator lines act as clear boundaries between sections so that per-line scoring does not bleed across blocks.
+
+## Returns
+
+Returns a two-element tuple.
+
+<ResponseField name="compressed_text" type="str">
+  The compressed output string — the merged, evicted context ready to be used directly as your LLM prompt. This is identical to `result.compressed_text` and is surfaced at the top level for convenience.
+</ResponseField>
+
+<ResponseField name="result" type="CompressResult">
+  The full [`CompressResult`](/api-reference/types#compressresult) from the underlying `compress_context` call, including token counts, savings percentages, and the policy name that ran. `result.original_text` will contain the merged (pre-compression) string.
+</ResponseField>
+
+## Example
+
+```python
+from supercompress import compress_for_turn
+
+compressed, stats = compress_for_turn(
+    context_blocks=[
+        "## System Notes\n…",
+        "## Tool Output\n…",
+        "## Chat History\n…",
+    ],
+    user_query="Summarize the API",
+    budget_ratio=0.35,
+)
+# Use compressed directly as your LLM prompt
+print(f"Saved {stats.kv_savings_pct:.1f}% KV cache")
+```
+
+<Note>
+  Because `compress_for_turn` calls `compress_context` internally, it inherits the same checkpoint-loading and H2O-fallback behaviour. If you need a specific eviction policy, call `compress_context` directly with the merged string and your chosen `policy=` argument.
+</Note>

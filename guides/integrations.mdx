@@ -1,0 +1,183 @@
+---
+title: "Integrating SuperCompress with OpenAI, LangChain, and More"
+sidebarTitle: "Integrations"
+description: "Wire SuperCompress into any Python backend, chat API, or agent framework to shrink LLM context before it hits the GPU."
+---
+
+SuperCompress is a library — you wire it in wherever you build LLM prompts from long context. Whether you are calling OpenAI directly, running chains in LangChain, piping data through a shell script, or serving a browser demo, there is a pattern that fits without changing your surrounding application logic.
+
+## Integration overview
+
+| Integration | When to use |
+|---|---|
+| Python import | Any backend, scripts, notebooks |
+| OpenAI-style wrapper | Chat APIs with `messages[]` |
+| LangChain hook | Chains / agents with message history |
+| Local HTTP server | Dev tools, non-Python clients |
+| Browser demo | Judges, docs, no install |
+
+## Integration patterns
+
+<Tabs>
+  <Tab title="Python">
+    The core `compress_for_turn()` function accepts a list of context blocks (strings) and a user query, then returns compressed text and a stats object. This is the lowest-level entry point and works in any Python environment — backend services, Jupyter notebooks, or batch scripts.
+
+    ```python
+    from supercompress import compress_for_turn
+
+    compressed, stats = compress_for_turn(
+        context_blocks=[system_prompt, tool_output, chat_history],
+        user_query=user_message,
+        budget_ratio=0.35,
+    )
+    # Send `compressed` to your LLM instead of the full merged context
+    ```
+
+    Track the sustainability impact of each compression call with the built-in metrics helper:
+
+    ```python
+    from supercompress.benchmarks.metrics import sustainability_from_tokens_saved
+
+    saved = stats.original_tokens - stats.kept_tokens
+    impact = sustainability_from_tokens_saved(saved)
+    print(impact.to_dict())
+    ```
+  </Tab>
+
+  <Tab title="OpenAI">
+    `compress_messages()` wraps a standard OpenAI `messages` list. It preserves all `system` messages verbatim at the front, keeps the final user turn intact, and compresses everything in between into a single context block. The full secret key is only shown once at creation time.
+
+    ```python
+    from examples.integrations.openai_wrapper import compress_messages
+    from openai import OpenAI
+
+    client = OpenAI()
+
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Here is a long log:\n" + "\n".join(f"line {i}" for i in range(200))},
+        {"role": "assistant", "content": "Got it."},
+        {"role": "user", "content": "What was line 150 about?"},
+    ]
+
+    # Compress before sending — only non-system context is affected
+    messages = compress_messages(messages, budget_ratio=0.35)
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+    )
+    print(response.choices[0].message.content)
+    ```
+
+    <Note>
+      Only **non-system** context is compressed. The latest user turn is always preserved verbatim so the model receives the current question in full.
+    </Note>
+
+    Under the hood, `compress_messages()` identifies the system block, extracts the middle history as context blocks, calls `compress_for_turn()`, and re-packages the result as a single `user` message prefixed with a token-count summary:
+
+    ```python
+    def compress_messages(
+        messages: list[dict],
+        budget_ratio: float = 0.35,
+    ) -> list[dict]:
+        """
+        Compress all but the last user message into a single context block.
+        System messages are preserved verbatim at the front.
+        """
+        # ...separates system messages, compresses middle history...
+        compressed_msg = {
+            "role": "user",
+            "content": f"[SuperCompress: {stats.original_tokens}→{stats.kept_tokens} tok]\n\n{compressed}\n\n---\n\n{query}",
+        }
+        return system + [compressed_msg]
+    ```
+  </Tab>
+
+  <Tab title="LangChain">
+    `compress_history()` mirrors the LangChain message-history pattern without requiring LangChain as a dependency. It accepts a sequence of `Message` dataclass objects (role + content), keeps system messages and the final user turn untouched, and compresses the middle assistant/user turns.
+
+    ```python
+    from examples.integrations.langchain_hook import Message, compress_history
+
+    msgs = [
+        Message("system", "You are helpful."),
+        Message("user", "log:\n" + "\n".join(f"entry {i}" for i in range(150))),
+        Message("assistant", "Noted."),
+        Message("user", "Summarize entry 75"),
+    ]
+
+    compressed_msgs, meta = compress_history(msgs, budget_ratio=0.35)
+
+    print(meta)
+    # {'original_tokens': ..., 'kept_tokens': ..., 'kv_savings_pct': ...}
+
+    # Pass compressed_msgs to your chain's invoke() as usual
+    ```
+
+    The function signature and return shape make it a drop-in before any `chain.invoke()` call:
+
+    ```python
+    def compress_history(
+        messages: Sequence[Message],
+        budget_ratio: float = 0.35,
+    ) -> tuple[list[Message], dict]:
+        """Keep system + latest user; compress everything in between."""
+        # Returns (compressed_messages, stats_dict)
+        ...
+    ```
+
+    <Tip>
+      There is **no LangChain dependency** in the core SuperCompress package. The `langchain_hook.py` example is self-contained and copy-paste friendly — drop it directly into your project.
+    </Tip>
+  </Tab>
+
+  <Tab title="curl / HTTP">
+    Start the local development server, then POST JSON to `/api/compress`. This endpoint requires no API key and is designed for browser demos and non-Python clients.
+
+    ```bash
+    pip install -e ".[serve]"
+    python scripts/local_web_server.py
+    ```
+
+    ```bash
+    curl -sS -X POST "http://127.0.0.1:8790/api/compress" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "context": "def fetch():\n    return None\n\nfiller line 1\nfiller line 2\n...",
+        "query": "What does fetch return?",
+        "budget_ratio": 0.35,
+        "compare": true
+      }' | python3 -m json.tool
+    ```
+
+    The `compare: true` flag returns results for all available policies side-by-side, which is useful for benchmarking during development.
+
+    For authenticated production use, send your API key to the `/v1/compress` endpoint instead:
+
+    ```bash
+    curl -sS -X POST "http://your-api-host/v1/compress" \
+      -H "X-API-Key: sc_live_xxxxxxxx" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "context": "long document...",
+        "query": "Summarize this context.",
+        "budget_ratio": 0.35
+      }' | python3 -m json.tool
+    ```
+
+    <Note>
+      For production workloads, prefer importing the Python API in-process. The HTTP server adds a round-trip and is primarily intended for local development and non-Python integrations.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Policy selection quick reference
+
+Use the `policy` argument to override the default SuperCompress learned policy with an explicit baseline, or omit it to let the library choose the best available option.
+
+| Call | Policy used |
+|---|---|
+| `compress_context(text, q)` | SuperCompress (or H2O fallback if no checkpoint) |
+| `compress_context(..., policy=FIFO())` | Explicit FIFO baseline |
+| `compare_policies(text, q)` | All policies — returns dict keyed by policy name |

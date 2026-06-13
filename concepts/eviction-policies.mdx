@@ -1,0 +1,162 @@
+---
+title: "KV Eviction Policies in SuperCompress"
+sidebarTitle: "Eviction Policies"
+description: "Explore every eviction policy in SuperCompress — FIFO, Truncation, H2O, Summarization, the learned neural policy, and the theoretical Oracle upper bound."
+---
+
+An eviction policy decides **which tokens to keep** when a context must be compressed to a fixed budget. In SuperCompress every policy implements the `EvictionPolicy` abstract base class from `policies.py`, which exposes a single method: `select(records, budget) → List[int]`. The method receives the full list of `TokenRecord` objects produced by `build_inference_records` and the integer token budget, and returns a sorted list of token position indices to retain. Policies range from stateless rules (FIFO, Truncation) to attention-informed heuristics (H2O, SnapKV) to the trained neural policy (LearnedPolicy) used by SuperCompress by default.
+
+## Policy Comparison
+
+| Policy | Class | Strategy |
+|--------|-------|----------|
+| FIFO | `FIFO` | Drop oldest tokens; keep the most recent `budget` tokens |
+| LRU | `LRU` | Keep tokens with highest recency score |
+| Sliding Window | `SlidingWindow` | Recent half + first 5% attention sinks |
+| Truncation | `TruncationPolicy` | Attention sinks + most recent tokens (head+tail) |
+| Summarization | `SummarizationPolicy` | Extractive: keep lines with highest entity overlap to the question |
+| H2O | `H2OPolicy` | Attention sinks + recent window + top cumulative-attention tokens |
+| SuperCompress (Learned) | `LearnedPolicy` | Top-k tokens by `EvictionPolicyNetwork` keep score |
+| Attention Heuristic | `AttentionHeuristicPolicy` | Non-learned: keep tokens with highest `attention_mass` |
+| SnapKV | `SnapKVPolicy` | Score prefix tokens by attention from an observation window at sequence end |
+| Oracle | `OraclePolicy` | Upper bound: keep all oracle-important tokens, then fill with recent |
+
+---
+
+## FIFO
+
+**What it does:** `FIFO` discards the oldest tokens first, retaining only the most recent `budget` tokens. It is the simplest possible eviction policy and requires no per-token scoring.
+
+**When to use it:** Useful as a fast lower-bound baseline in benchmarks, or when your context is append-only and older content is genuinely irrelevant. Not suitable when answers are buried in the middle of long sessions.
+
+```python
+from supercompress import compress_context
+from supercompress.policies import FIFO
+
+result = compress_context(
+    long_context,
+    "What does fetch return when the row is missing?",
+    budget_ratio=0.35,
+    policy=FIFO(),
+)
+print(result.compressed_text)
+```
+
+---
+
+## Truncation
+
+**What it does:** `TruncationPolicy` is a head+tail strategy. It keeps a small number of attention sink tokens from the start of the sequence (`sink_tokens=4` by default) and fills the remaining budget with the most recent tokens. Content in the middle of the context is always dropped.
+
+**When to use it:** A reasonable default for chat applications where older turns are genuinely stale. Fails badly when critical information appears in the middle of the context (oracle recall ~25%).
+
+```python
+from supercompress import compress_context
+from supercompress.policies import TruncationPolicy
+
+result = compress_context(
+    long_context,
+    "Which commit introduced the regression?",
+    budget_ratio=0.35,
+    policy=TruncationPolicy(sink_tokens=4),
+)
+print(f"Kept {result.kept_tokens} / {result.original_tokens} tokens")
+```
+
+---
+
+## Summarization
+
+**What it does:** `SummarizationPolicy` is an extractive summarization baseline. It scores each source line by the number of question entity overlaps it contains, adds a small `attention_mass` signal, and keeps the highest-scoring whole lines until the budget is reached. Lines containing oracle-important tokens get a +10 score boost. Code lines get a +0.5 bonus.
+
+**When to use it:** Good when the query is keyword-rich and the context is prose. Less effective on code-heavy contexts where entity overlap is weaker.
+
+```python
+from supercompress import compress_context
+from supercompress.policies import SummarizationPolicy
+
+question = "How is the retry interval calculated?"
+result = compress_context(
+    long_context,
+    question,
+    budget_ratio=0.35,
+    policy=SummarizationPolicy(question=question),
+)
+print(result.compressed_text)
+```
+
+---
+
+## H2O (Heavy Hitter Oracle)
+
+**What it does:** `H2OPolicy` implements the Heavy Hitter Oracle strategy from [Zhang et al. (2023)](https://arxiv.org/abs/2306.14048). It partitions the budget into three pools: attention sink tokens (first `sink_tokens`), a recent window (`recent_ratio=0.2` of the budget), and "heavy hitter" slots filled by the tokens with the highest cumulative `h2o_score` (or `layer_attention_mean` as a fallback). This gives it near-oracle recall (98%) without any training.
+
+**When to use it:** The best non-learned baseline. SuperCompress automatically falls back to `H2OPolicy` if no trained checkpoint is found, so it is always safe to use as a production default.
+
+```python
+from supercompress import compress_context
+from supercompress.policies import H2OPolicy
+
+result = compress_context(
+    long_context,
+    "What is the default timeout value?",
+    budget_ratio=0.35,
+    policy=H2OPolicy(sink_tokens=4, recent_ratio=0.2),
+)
+print(f"{result.kv_savings_pct:.1f}% KV saved")
+```
+
+<Tip>
+  H2O is the automatic fallback when `checkpoints/default.pt` is not found. If you see `"H2O-fallback"` in benchmark output, it means the trained checkpoint was not loaded. Run `pip install git+https://github.com/arjunkshah/supercompress.git` to ensure the checkpoint is bundled.
+</Tip>
+
+---
+
+## SuperCompress (Learned Policy)
+
+**What it does:** `LearnedPolicy` runs the `EvictionPolicyNetwork` — a ~5K-parameter MLP with the architecture `Linear(9→64) → LayerNorm → GELU → Linear(64→64) → GELU → Linear(64→1)`. For each token it computes a sigmoid keep-score over the 9-dimensional feature vector from `build_feature_tensor`. The top-`budget` tokens by score are retained. The model runs on CPU in well under 1 ms.
+
+**When to use it:** The recommended default for all production workloads. Achieves 100% oracle recall at 35% token budget — the only policy to match the theoretical Oracle upper bound in benchmarks.
+
+```python
+from supercompress import compress_context
+
+# LearnedPolicy is loaded automatically from checkpoints/default.pt
+result = compress_context(
+    long_context,
+    "What does fetch return when the row is missing?",
+    budget_ratio=0.35,
+    # policy omitted → defaults to LearnedPolicy
+)
+print(result.compressed_text)
+print(f"{result.kv_savings_pct:.1f}% KV saved · {result.kept_tokens}/{result.original_tokens} tokens")
+```
+
+<Note>
+  `OraclePolicy` is reserved for benchmarking only — it uses ground-truth `is_oracle_important` labels that are unavailable at inference time. Never use it in production.
+</Note>
+
+---
+
+## Comparing All Policies at Once
+
+Use `compare_policies()` to run every policy on the same context and question and get a side-by-side result dict:
+
+```python
+from supercompress import compare_policies
+
+results = compare_policies(
+    long_context,
+    "What does fetch return when the row is missing?",
+    budget_ratio=0.35,
+)
+
+for policy_name, result in results.items():
+    print(
+        f"{policy_name:20s}  "
+        f"kept={result.kept_tokens:4d}  "
+        f"savings={result.kv_savings_pct:5.1f}%"
+    )
+```
+
+For a full multi-seed statistical comparison with latency and recall metrics, use `run_policy_benchmarks()` from `supercompress.benchmarks.runner` — see [Benchmarks](/concepts/benchmarks) for details.

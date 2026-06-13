@@ -1,0 +1,105 @@
+---
+title: "Environmental Impact: Tokens Saved to CO₂ Avoided"
+sidebarTitle: "Environmental Impact"
+description: "How SuperCompress translates tokens saved into GPU-seconds avoided, watt-hours, and estimated CO₂ — and the assumptions behind the numbers."
+---
+
+SuperCompress reduces the number of tokens that reach your LLM's KV cache prefill step. Fewer tokens means less GPU work, less energy consumed, and lower CO₂ emissions for the exact same workflow. The learned eviction policy runs on CPU in sub-millisecond time before any GPU inference begins, so the overhead of compression is negligible compared to the prefill cost it avoids on long contexts.
+
+<Warning>
+  The figures produced by SuperCompress's metrics module are **illustrative estimates**, not live per-deployment measurements. All assumptions are explicit and documented so you can adjust them for your hardware and grid. Do not present these numbers as measured carbon accounting without independent verification.
+</Warning>
+
+## What we measure
+
+Every compression call produces an `original_tokens` and `kept_tokens` value. The sustainability module converts the difference into an energy and emissions estimate using a simple linear model:
+
+| Metric | Definition |
+|---|---|
+| **Tokens saved** | `original_tokens − kept_tokens` per compression call |
+| **KV savings %** | `(1 − kept / original) × 100` |
+| **GPU-seconds avoided** | Effective tokens saved ÷ throughput (tokens/sec) |
+| **Wh saved** | GPU-seconds avoided × GPU watts ÷ 3,600 |
+| **CO₂ avoided** | Wh saved × grid intensity (kg/kWh) ÷ 1,000 |
+
+Only the KV context portion of prefill is attributed to savings (controlled by `kv_share_of_prefill`). This avoids over-claiming: embedding lookup, attention over new tokens, and other prefill work are excluded.
+
+## Default assumptions
+
+The defaults are defined in `supercompress/benchmarks/metrics.py` as a frozen dataclass so every estimate is fully reproducible and traceable:
+
+| Parameter | Default | Rationale |
+|---|---|---|
+| `tokens_per_gpu_second` | 2,500 | 7B-class prefill on a consumer GPU (e.g. RTX 3090) |
+| `gpu_watts` | 150 W | Typical single-GPU sustained draw during inference |
+| `kv_share_of_prefill` | 55% | Only the context/KV portion is attributed to savings |
+| `grid_kg_co2_per_kwh` | 0.417 | US average grid intensity (EIA 2023) |
+
+You can override any of these by constructing a custom `SustainabilityAssumptions` object and passing it to `sustainability_from_tokens_saved()`.
+
+## Python API
+
+Use `sustainability_from_tokens_saved()` to compute an estimate for any number of tokens saved:
+
+```python
+from supercompress import compress_context
+from supercompress.benchmarks.metrics import (
+    SustainabilityAssumptions,
+    sustainability_from_tokens_saved,
+)
+
+# Compress a context passage
+result = compress_context(
+    "Your long document or log output here...",
+    "What does fetch return?",
+    budget_ratio=0.35,
+)
+
+# Calculate sustainability impact
+tokens_saved = result.original_tokens - result.kept_tokens
+impact = sustainability_from_tokens_saved(tokens_saved)
+
+print(f"Tokens saved:        {impact.tokens_saved:,}")
+print(f"GPU-seconds avoided: {impact.gpu_seconds_avoided:.4f}")
+print(f"Wh saved:            {impact.watt_hours_saved:.6f}")
+print(f"CO₂ avoided (kg):    {impact.co2_kg_avoided:.8f}")
+
+# Inspect the assumptions used
+print(impact.assumptions.to_dict())
+```
+
+To use custom hardware assumptions — for example, a datacenter GPU at higher wattage or a greener grid:
+
+```python
+custom = SustainabilityAssumptions(
+    tokens_per_gpu_second=5_000,   # A100-class GPU
+    gpu_watts=400,                  # Higher TDP
+    grid_kg_co2_per_kwh=0.233,     # EU grid average
+    kv_share_of_prefill=0.55,
+)
+
+impact = sustainability_from_tokens_saved(tokens_saved, assumptions=custom)
+print(impact.to_dict())
+```
+
+## Scale example
+
+At 1 million compressions with approximately 800 tokens saved per run:
+
+- **800 million tokens** avoided from GPU prefill
+- **~29 kWh** of GPU energy saved (default assumptions)
+- **~12 kg CO₂** avoided (US grid average)
+
+These numbers scale linearly — 10M compressions avoids roughly 120 kg CO₂, comparable to driving a petrol car about 500 km.
+
+<Note>
+  Use the **Projection calculator** on the SuperCompress website (`#impact`) to adjust compression volume, tokens-per-run, and grid intensity interactively without writing any code.
+</Note>
+
+## Honesty guidance for submissions and reports
+
+When citing SuperCompress sustainability metrics in papers, demos, or hackathon submissions, follow these principles to avoid misleading claims:
+
+1. **State assumptions clearly** — quote the `SustainabilityAssumptions` values used; do not present estimates as live metering.
+2. **Report quality alongside savings** — token reduction without answer quality data is not a fair comparison. Use `answer_quality_score()` or an equivalent evaluation.
+3. **Scope the claim correctly** — SuperCompress targets edge-CPU policy inference and measurable KV cache reduction, not datacenter-wide carbon accounting.

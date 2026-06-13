@@ -1,0 +1,104 @@
+---
+title: "compress_detailed() — Compress with Per-Line Annotations"
+sidebarTitle: "compress_detailed"
+description: "Compress a context string and receive per-line keep/drop annotations explaining why each line was retained or evicted — ideal for debugging and demos."
+---
+
+`compress_detailed` performs the same learned compression as [`compress_context`](/api-reference/compress-context) but additionally returns a `LineAnnotation` for every line in the original text. Each annotation records whether the line was kept, and the human-readable reason behind that decision — whether it was retained as an attention sink, matched a question entity, scored highly by the learned policy, or was evicted. Use `compress_detailed` when you need to understand exactly what the compressor is doing: building a visualisation, writing tests that assert retention behaviour, or demonstrating the system to stakeholders.
+
+## Function signature
+
+```python
+from supercompress import compress_detailed
+
+result, annotations = compress_detailed(
+    text: str,
+    question: str,
+    budget_ratio: float = 0.35,
+    policy: Optional[EvictionPolicy] = None,
+    checkpoint: Optional[str] = None,
+) -> tuple[CompressResult, List[LineAnnotation]]
+```
+
+## Parameters
+
+<ParamField path="text" type="str" required>
+  The full context string to compress. Split into lines internally; each line receives its own `LineAnnotation` in the returned list.
+</ParamField>
+
+<ParamField path="question" type="str" required>
+  The current user query. Used to identify question entities for retention scoring and to populate the `"question entity match"` reason in annotations.
+</ParamField>
+
+<ParamField path="budget_ratio" type="float" default="0.35">
+  Fraction of tokens to retain, in `(0, 1]`. Forwarded to the same eviction logic used by `compress_context`.
+</ParamField>
+
+<ParamField path="policy" type="EvictionPolicy" optional>
+  An explicit eviction policy that overrides the checkpoint-loaded learned policy. When `None`, the default checkpoint is used with an automatic H2O fallback.
+</ParamField>
+
+<ParamField path="checkpoint" type="str" optional>
+  Path to a trained weights file. Defaults to the bundled `checkpoints/default.pt`. Only used when `policy` is `None`.
+</ParamField>
+
+## Returns
+
+Returns a two-element tuple.
+
+<ResponseField name="result" type="CompressResult">
+  The full [`CompressResult`](/api-reference/types#compressresult) — identical to what `compress_context` would return for the same arguments.
+</ResponseField>
+
+<ResponseField name="annotations" type="List[LineAnnotation]">
+  A list of [`LineAnnotation`](/api-reference/types#lineannotation) objects, one per line in the original text, in source order. Empty when `text` is blank.
+</ResponseField>
+
+## LineAnnotation fields
+
+Each element of the `annotations` list is a `LineAnnotation` dataclass with the following fields:
+
+<ResponseField name="line_index" type="int">
+  Zero-based index of this line in the original text.
+</ResponseField>
+
+<ResponseField name="text" type="str">
+  The raw content of the line as it appeared in the input.
+</ResponseField>
+
+<ResponseField name="kept" type="bool">
+  `True` if this line is present in `result.compressed_text`; `False` if it was evicted.
+</ResponseField>
+
+<ResponseField name="reason" type="str">
+  A human-readable explanation for the keep/drop decision. Exactly one of the following values:
+
+  | Value | When assigned |
+  |-------|---------------|
+  | `"attention sink (always kept)"` | Line index is 0 or 1 — the first two lines are always retained as attention sinks. |
+  | `"recent context (always kept)"` | Line is within the last 8 lines of the text — always retained regardless of policy score. |
+  | `"question entity match"` | The line contains at least one named entity extracted from `question`. |
+  | `"learned retention score"` | The policy scored this line highly enough to survive eviction. |
+  | `"evicted by policy"` | The line did not meet any retention criterion and was dropped. |
+</ResponseField>
+
+## Example
+
+```python
+from supercompress import compress_detailed
+
+result, lines = compress_detailed(
+    text=context,
+    question="What does fetch return?",
+)
+
+for ln in lines:
+    status = "✓" if ln.kept else "✗"
+    print(f"[{status}] Line {ln.line_index}: {ln.reason}")
+
+print(f"\nCompressed: {result.kv_savings_pct:.1f}% KV saved")
+```
+
+<Note>
+  When `text` is empty or whitespace-only, `compress_detailed` delegates to `compress_context` internally and returns an empty annotations list `[]`. No error is raised.
+</Note>

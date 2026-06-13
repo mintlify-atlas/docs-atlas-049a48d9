@@ -1,0 +1,85 @@
+---
+title: "SuperCompress HTTP API Overview and Authentication"
+sidebarTitle: "Overview"
+description: "REST API overview for SuperCompress: authentication schemes, endpoint table, API key lifecycle, and base URL for local and production deployments."
+---
+
+The SuperCompress HTTP API exposes context compression and API key management over REST, making it straightforward to integrate from any language or toolchain — not just Python. Two authentication schemes protect different surfaces: a Firebase ID token for dashboard operations and an API key for the compression endpoint itself.
+
+## Authentication schemes
+
+### Firebase ID token
+
+Dashboard operations — listing and managing API keys, inspecting usage, and fetching user info — require a Firebase ID token obtained after signing in through Firebase Authentication. Pass the token in the `Authorization` header:
+
+```
+Authorization: Bearer <firebase_id_token>
+```
+
+In **dev mode** (`SC_AUTH_DEV=1`), the server accepts synthetic tokens of the form `dev:<uid>:<email>` so you can test locally without a live Firebase project. See the [API Dashboard guide](/guides/api-dashboard) for full Firebase setup instructions.
+
+### API key
+
+The `/v1/compress` endpoint is protected by an API key. Keys are prefixed with `sc_live_` and can be passed in either of two ways:
+
+```
+X-API-Key: sc_live_YOUR_KEY
+```
+
+or
+
+```
+Authorization: Bearer sc_live_YOUR_KEY
+```
+
+<Note>
+API keys are created via `POST /api/keys` and are **shown only once** at creation time. SuperCompress stores only a SHA-256 hash — if you lose the key you must create a new one.
+</Note>
+
+## Endpoint overview
+
+| Method   | Path                      | Auth           | Description                  |
+| -------- | ------------------------- | -------------- | ---------------------------- |
+| `POST`   | `/v1/compress`            | API key        | Compress context             |
+| `GET`    | `/api/me`                 | Firebase token | Current user                 |
+| `GET`    | `/api/keys`               | Firebase token | List keys + usage            |
+| `POST`   | `/api/keys`               | Firebase token | Create key                   |
+| `PATCH`  | `/api/keys/{id}`          | Firebase token | Rename key                   |
+| `DELETE` | `/api/keys/{id}`          | Firebase token | Revoke key                   |
+| `GET`    | `/api/keys/{id}/usage`    | Firebase token | Per-key usage                |
+| `POST`   | `/api/compress`           | None           | Playground (no auth)         |
+| `GET`    | `/api/health`             | None           | Health check                 |
+
+## Getting an API key
+
+1. Start the dashboard locally or point your browser at your deployed instance.
+2. Sign in with Firebase Authentication (or use dev mode — see below).
+3. Open the **Keys** panel and click **Create key**. Give it a name (default: `"Production"`).
+4. Copy the full `sc_live_…` value immediately — it is shown only once.
+
+For Firebase setup details and production deployment steps, refer to the [API Dashboard guide](/guides/api-dashboard).
+
+### Dev mode
+
+Set `SC_AUTH_DEV=1` to skip Firebase token verification. Pass a synthetic token instead:
+
+```
+Authorization: Bearer dev:my-uid:me@dev.local
+```
+
+This lets you create and use API keys end-to-end without a Firebase project.
+
+## Unauthenticated endpoints
+
+`POST /api/compress` is intentionally unauthenticated. It powers the in-browser playground and is convenient for local smoke tests. It accepts the same body as `/v1/compress`, plus an optional `compare: true` field that runs all built-in policies side-by-side.
+
+`GET /api/health` returns `{"ok": true, "service": "supercompress-web"}` and requires no credentials.
+
+## Base URL
+
+| Environment | Base URL |
+| ----------- | -------- |
+| Local dev   | `http://127.0.0.1:8790` |
+| Production  | Your deployed FastAPI instance (Cloud Run, Fly.io, etc.) |
+
+The dashboard JavaScript reads `SC_API_BASE` from `firebase-config.js`; set that variable if your dashboard is served from a different origin than the API server.

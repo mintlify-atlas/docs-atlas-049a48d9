@@ -1,0 +1,127 @@
+---
+title: "compress_context() — Compress a Single Context String"
+sidebarTitle: "compress_context"
+description: "Trim a single context string before each LLM call using learned KV eviction, keeping the most relevant tokens within a token budget."
+---
+
+`compress_context` is the core function of SuperCompress. Given a full context string and the current user query, it scores every token for relevance and evicts the lowest-scoring ones until the output fits within your `budget_ratio`. Use it whenever you have a single block of text — a conversation history, a retrieved document, or a combined system prompt — and want to reduce KV-cache pressure before calling your LLM.
+
+## Function signature
+
+```python
+from supercompress import compress_context
+
+result = compress_context(
+    text: str,
+    question: str,
+    budget_ratio: float = 0.35,
+    policy: Optional[EvictionPolicy] = None,
+    checkpoint: Optional[str] = None,
+) -> CompressResult
+```
+
+## Parameters
+
+<ParamField path="text" type="str" required>
+  The full context string to compress. This is the raw text you would otherwise pass directly to your LLM — conversation history, retrieved passages, tool outputs, or anything else that contributes to context length.
+</ParamField>
+
+<ParamField path="question" type="str" required>
+  The current user query. SuperCompress uses this to score token relevance: tokens that overlap with named entities, keywords, and semantic patterns found in the question receive higher retention scores.
+</ParamField>
+
+<ParamField path="budget_ratio" type="float" default="0.35">
+  Fraction of tokens to retain, expressed as a value in `(0, 1]`. For example, `0.35` keeps 35 % of tokens and evicts 65 %. Must be strictly greater than `0` and at most `1`.
+</ParamField>
+
+<ParamField path="policy" type="EvictionPolicy" optional>
+  An explicit eviction policy object. When provided, this overrides both the learned checkpoint and the H2O fallback entirely. Pass any class that implements the `EvictionPolicy` ABC — for example `FIFO()`, `TruncationPolicy()`, or `H2OPolicy()`. When `None`, the policy is loaded from `checkpoint`.
+</ParamField>
+
+<ParamField path="checkpoint" type="str" optional>
+  Path to a trained weights file (`.pt`). Defaults to the bundled `checkpoints/default.pt` that ships with the package. Only used when `policy` is `None`.
+</ParamField>
+
+## Raises
+
+<Warning>
+  `ValueError` is raised if `budget_ratio` is not in the range `(0, 1]`. Values of `0` or below, and values greater than `1`, are rejected before any compression work begins.
+</Warning>
+
+## Empty input behaviour
+
+Passing an empty string — or a string that is only whitespace — never raises an error. `compress_context` detects this case immediately and returns a `CompressResult` with `policy_name="noop"`, `original_tokens=0`, and `kept_tokens=0`. The `compressed_text` field will mirror the original (empty) input.
+
+## Returns
+
+Returns a [`CompressResult`](/api-reference/types#compressresult) dataclass.
+
+<ResponseField name="compressed_text" type="str">
+  The evicted-and-rejoined output text, ready to be passed directly to your LLM.
+</ResponseField>
+
+<ResponseField name="original_tokens" type="int">
+  Total number of tokens in `text` before compression.
+</ResponseField>
+
+<ResponseField name="kept_tokens" type="int">
+  Number of tokens retained after eviction.
+</ResponseField>
+
+<ResponseField name="kv_savings_pct" type="float">
+  Percentage of KV-cache entries eliminated: `(1 − kept / original) × 100`.
+</ResponseField>
+
+<ResponseField name="compression_ratio" type="float">
+  Ratio of original to kept tokens: `original_tokens / kept_tokens`. Returns `0.0` if no tokens were kept.
+</ResponseField>
+
+<ResponseField name="policy_name" type="str">
+  The name of the policy that ran. Typical values: `"SuperCompress"`, `"H2O-fallback"`, `"FIFO"`, `"Truncation"`.
+</ResponseField>
+
+<ResponseField name="kept_line_ratio" type="float">
+  Fraction of source lines retained, including attention-sink and recent-context lines that are always kept regardless of budget.
+</ResponseField>
+
+<ResponseField name="budget_ratio" type="float">
+  The `budget_ratio` value that was used for this call.
+</ResponseField>
+
+<ResponseField name="question" type="str">
+  The `question` string passed to this call (stored for reference and downstream metrics).
+</ResponseField>
+
+See [Types](/api-reference/types) for the full `CompressResult` field reference.
+
+## Examples
+
+### Basic usage
+
+```python
+from supercompress import compress_context
+
+result = compress_context(
+    "long context text…",
+    "What does fetch return when the row is missing?",
+    budget_ratio=0.35,
+)
+print(result.compressed_text)   # send to your LLM
+print(f"{result.kv_savings_pct:.1f}% KV saved")
+print(f"{result.kept_tokens}/{result.original_tokens} tokens retained")
+```
+
+### Explicit policy override
+
+If you want deterministic, non-learned compression — for example during unit tests or when comparing baselines — pass a policy directly:
+
+```python
+from supercompress import compress_context
+from supercompress.policies import FIFO
+
+result = compress_context(text, question, policy=FIFO())
+```
+
+<Tip>
+  When no `checkpoint` file is found and no `policy` is provided, `compress_context` automatically falls back to `H2OPolicy` (Heavy Hitter Oracle). The `policy_name` field on the returned result will read `"H2O-fallback"` so you can detect this at runtime.
+</Tip>

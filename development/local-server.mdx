@@ -1,0 +1,99 @@
+---
+title: "Run the SuperCompress Local Development Server"
+sidebarTitle: "Local Server"
+description: "Spin up a local FastAPI server to serve the browser demo, playground, /v1/compress, and /dashboard without a Vercel deployment."
+---
+
+The local development server is a FastAPI application that replicates the full SuperCompress web surface on your machine — the browser demo, the `/dashboard` for API-key management, the unauthenticated `/api/compress` playground, and the authenticated `/v1/compress` endpoint. It is intentionally separate from the public Vercel site, which performs all compression client-side in the browser and never calls a backend.
+
+## Prerequisites
+
+Install the `serve` extra alongside the core library:
+
+```bash
+pip install -e ".[serve]"
+```
+
+This pulls in `fastapi`, `uvicorn[standard]`, `pydantic`, and `httpx`. If you also want Firebase-backed key storage for a closer-to-production setup, add the `firebase` extra:
+
+```bash
+pip install -e ".[serve,firebase]"
+```
+
+## Start the server
+
+<Steps>
+  <Step title="Set dev environment variables">
+    `SC_AUTH_DEV=1` disables Firebase token verification so any request is treated as authenticated. `SC_KEY_STORE=memory` keeps API keys in process memory instead of Firestore — no GCP credentials required.
+  </Step>
+  <Step title="Launch the server">
+    ```bash
+    SC_AUTH_DEV=1 SC_KEY_STORE=memory python scripts/local_web_server.py
+    ```
+
+    Uvicorn binds to `http://127.0.0.1:8790`. You should see output similar to:
+
+    ```
+    INFO:     Started server process [12345]
+    INFO:     Uvicorn running on http://127.0.0.1:8790 (Press CTRL+C to quit)
+    ```
+  </Step>
+</Steps>
+
+## Available endpoints
+
+Once the server is running the following URLs and routes are available:
+
+| URL / Route | Description |
+|---|---|
+| `http://127.0.0.1:8790` | Landing page / browser demo |
+| `http://127.0.0.1:8790/dashboard` | API key management dashboard |
+| `POST /api/compress` | Unauthenticated playground — no key required |
+| `POST /v1/compress` | Authenticated compress endpoint — requires an API key |
+| `GET /api/health` | Health check |
+| `GET /api/me` | Current user info (requires Firebase token) |
+| `GET /api/keys` | List API keys (requires Firebase token) |
+
+<Note>
+  With `SC_AUTH_DEV=1` set, the Firebase token checks on `/api/me` and `/api/keys` are bypassed, making it easy to test key management flows without a real Firebase project.
+</Note>
+
+## Verify the server is healthy
+
+```bash
+curl http://127.0.0.1:8790/api/health
+# {"ok": true, "service": "supercompress-web"}
+```
+
+## Compress text via the playground endpoint
+
+`POST /api/compress` is unauthenticated and is the same route the browser demo calls. The `compare` flag adds a full policy comparison (FIFO, Truncation, Summarization, H2O, SuperCompress) to the response alongside per-line annotations:
+
+```bash
+curl -X POST http://127.0.0.1:8790/api/compress \
+  -H 'Content-Type: application/json' \
+  -d '{"context": "long text…", "query": "What does fetch return?", "budget_ratio": 0.35, "compare": true}'
+```
+
+The response includes `compressed_text`, `original_tokens`, `kept_tokens`, `kv_savings_pct`, `line_annotations`, and — when `compare: true` — a `compare` map keyed by policy name.
+
+<Tip>
+  Set `budget_ratio` between `0.05` and `1.0`. A value of `0.35` keeps roughly 35 % of the original tokens, yielding ~65 % KV savings in typical workloads.
+</Tip>
+
+## Call the authenticated endpoint
+
+`POST /v1/compress` mirrors the hosted API and requires an `X-API-Key` header. Create a key via the `/dashboard` UI, then:
+
+```bash
+curl -X POST http://127.0.0.1:8790/v1/compress \
+  -H "X-API-Key: sc_live_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"context": "long text…", "query": "Summarize", "budget_ratio": 0.35}'
+```
+
+## Relationship to the public Vercel site
+
+<Note>
+  The public Vercel deployment of `web/` is fully static. Compression is performed client-side by the JavaScript engine in `web/assets/js/compress-engine.js` — no backend server is involved. The local dev server exists solely to develop and test the API layer, dashboard, and key-management flows.
+</Note>

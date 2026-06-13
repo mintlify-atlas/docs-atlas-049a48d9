@@ -1,0 +1,136 @@
+---
+title: "API Dashboard: Keys, Auth, and Usage Tracking"
+sidebarTitle: "API Dashboard"
+description: "Create API keys, track token usage per key, and authenticate requests against the SuperCompress compress endpoint."
+---
+
+The SuperCompress API dashboard lets you sign up, create and revoke API keys, and monitor per-key usage — tokens in, tokens out, and tokens saved — across every compression call your application makes. In local dev mode you can run the full dashboard without any cloud configuration; in production it backs onto Firebase Auth and Firestore.
+
+## Quick start (local dev)
+
+Run the dashboard locally in under a minute using an in-memory key store with no Firebase account required:
+
+```bash
+pip install -e ".[serve]"
+SC_AUTH_DEV=1 SC_KEY_STORE=memory python scripts/local_web_server.py
+```
+
+Open [http://127.0.0.1:8790/dashboard](http://127.0.0.1:8790/dashboard) in your browser. Dev mode accepts any email address and issues `dev:uid:email` tokens — no Firebase project or credentials needed.
+
+## Production setup
+
+<Steps>
+  <Step title="Create a Firebase project">
+    1. Go to the [Firebase console](https://console.firebase.google.com/) and create a new project.
+    2. Enable **Authentication** and turn on the Email/Password and Google sign-in providers.
+    3. Create a **Firestore** database in the same project.
+    4. Generate a **service account** JSON key from **Project Settings → Service accounts** and save it somewhere safe.
+    5. Set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of that JSON file.
+  </Step>
+
+  <Step title="Configure the web app">
+    Copy the Firebase web app config into the dashboard's JavaScript bundle:
+
+    ```bash
+    cp web/assets/js/firebase-config.example.js web/assets/js/firebase-config.js
+    ```
+
+    Edit `firebase-config.js` to fill in your project's `apiKey`, `authDomain`, `projectId`, and `SC_API_BASE` (the origin of your deployed API server if different from the static file host).
+  </Step>
+
+  <Step title="Deploy Firestore security rules">
+    ```bash
+    firebase deploy --only firestore:rules
+    ```
+
+    This restricts Firestore reads and writes so that users can only access their own key records.
+  </Step>
+
+  <Step title="Run the API server with Firestore">
+    ```bash
+    pip install -e ".[serve,firebase]"
+    SC_KEY_STORE=firestore python scripts/local_web_server.py
+    ```
+
+    Keys are now persisted in Firestore and survive server restarts.
+  </Step>
+
+  <Step title="Deploy to Cloud Run or Fly.io">
+    Deploy the FastAPI application to your preferred host — Cloud Run, Fly.io, or any container platform. Vercel serves the static dashboard files only; the API server runs as a separate service.
+
+    ```bash
+    # Example: Cloud Run
+    gcloud run deploy supercompress-api \
+      --source . \
+      --set-env-vars SC_KEY_STORE=firestore \
+      --set-env-vars GOOGLE_APPLICATION_CREDENTIALS=/secrets/sa.json
+    ```
+  </Step>
+</Steps>
+
+## Key management
+
+Once signed in, the `/dashboard` page exposes four operations on every key:
+
+| Action | Description |
+|---|---|
+| **Create** | Name your key; the full secret (`sc_live_…`) is shown exactly once and cannot be recovered afterwards |
+| **Rename** | Update the display name of an existing key at any time |
+| **Revoke** | Permanently disable a key; it is removed from the lookup index immediately |
+| **Usage** | View per-key request count, tokens in, tokens out, and tokens saved |
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `SC_AUTH_DEV` | off | Accept `dev:uid:email` tokens; bypasses Firebase entirely |
+| `SC_KEY_STORE` | `auto` | `memory`, `firestore`, or `auto` (picks Firestore if credentials are present) |
+| `SC_KEY_STORE_FILE` | — | Path to a JSON file for lightweight persistence in dev without Firestore |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service account JSON for Firestore and Auth |
+
+## API endpoints reference
+
+The FastAPI router exposes two groups of endpoints: dashboard management routes that require a Firebase ID token, and a compression route that requires an API key.
+
+### Dashboard management (Firebase ID token)
+
+Pass `Authorization: Bearer <firebase_id_token>` on every request.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/me` | Return the current authenticated user's UID and email |
+| `GET` | `/api/keys` | List all keys and per-key usage summary |
+| `POST` | `/api/keys` | Create a key — body: `{ "name": "Production" }` |
+| `PATCH` | `/api/keys/{id}` | Rename a key — body: `{ "name": "New name" }` |
+| `DELETE` | `/api/keys/{id}` | Revoke a key permanently |
+| `GET` | `/api/keys/{id}/usage` | Usage snapshot for a single key |
+
+### Authenticated compression (API key)
+
+```http
+POST /v1/compress
+X-API-Key: sc_live_xxxxxxxx
+Content-Type: application/json
+
+{
+  "context": "long document…",
+  "query": "Summarize this context.",
+  "budget_ratio": 0.35
+}
+```
+
+You can also pass the key as `Authorization: Bearer sc_live_…` if your HTTP client prefers that header. The response includes `compressed_text`, `original_tokens`, `kept_tokens`, `kv_savings_pct`, and `policy_name`. Usage is recorded automatically against the key.
+
+### Playground (no key required)
+
+`POST /api/compress` remains unauthenticated for the browser demo and local testing. It accepts the same request body and returns the same response shape.
+
+## Security
+
+<Warning>
+  Full API key secrets are **never stored** — the server persists only the SHA-256 hash of each key. If you lose the secret shown at creation time there is no way to recover it; revoke the key and create a new one.
+</Warning>
+
+- Firestore is accessed exclusively from the FastAPI server; the browser client never touches Firestore directly.
+- Revoked keys are removed from the hash lookup index immediately — there is no grace period.
+- In dev mode (`SC_AUTH_DEV=1`) any token in the `dev:uid:email` format is accepted; never run this in production.

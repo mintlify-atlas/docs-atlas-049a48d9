@@ -1,0 +1,168 @@
+---
+title: "SuperCompress Benchmark Results and Methodology"
+sidebarTitle: "Benchmarks"
+description: "Benchmark results, metric definitions, and step-by-step instructions for reproducing or extending SuperCompress's policy comparisons on your own data."
+---
+
+SuperCompress ships with a reproducible benchmark suite that measures eviction policy quality across three independent axes: oracle recall (did we keep the tokens that actually answer the question?), entity recall (did we keep the named entities from the query?), and latency. All reported numbers were produced by running `scripts/benchmark_web.py` over **8 random seeds** at a **35% token budget**, using synthetically generated long contexts from `supercompress.simulator`. The suite does not require an external LLM — quality is measured by comparing the compressed output against ground-truth oracle labels derived from the source text.
+
+## Benchmark Results
+
+Policy comparison at `budget_ratio=0.35`, averaged over 8 seeds:
+
+| Policy | Oracle recall | Entity recall | Latency |
+|--------|:-------------:|:-------------:|:-------:|
+| FIFO / Truncation | 25% | 73% | ~57 ms |
+| Summarization | 61% | 65% | ~63 ms |
+| H2O | 98% | 73% | ~56 ms |
+| **SuperCompress** | **100%** | **73%** | ~60 ms |
+
+SuperCompress matches H2O on entity recall and latency while achieving perfect oracle recall — the only policy to do so. Summarization improves on FIFO/Truncation for oracle recall but degrades entity recall, adding ~6 ms overhead for its line-scoring pass.
+
+<Info>
+  KV savings are held constant across all policies at ~65% (the budget is the same for all runs). The table focuses on quality differences that emerge from **which** tokens each policy chooses to keep.
+</Info>
+
+---
+
+## Metric Definitions
+
+All metrics are implemented in `supercompress/benchmarks/metrics.py`.
+
+### `oracle_recall`
+
+```python
+def oracle_recall(
+    original_lines: List[str],
+    kept_positions: Set[int],
+    question: str,
+) -> float:
+```
+
+Identifies the tokens that are truly necessary to answer `question` using `mark_oracle_important` (a heuristic based on entity matching and structural code patterns), then measures the fraction of those tokens that appear in the set of kept positions. A score of `1.0` means every answer-bearing token was retained.
+
+**Range:** 0.0 – 1.0. Higher is better. This is the primary quality metric.
+
+---
+
+### `entity_recall`
+
+```python
+def entity_recall(original: str, compressed: str, question: str) -> float:
+```
+
+Extracts named entities from the question using `extract_question_entities`, then checks how many of those entities appear (as substrings) in the compressed text. A score of `1.0` means all question entities are present in the output.
+
+**Range:** 0.0 – 1.0. Higher is better.
+
+---
+
+### `answer_quality_score`
+
+```python
+def answer_quality_score(original: str, compressed: str, question: str) -> float:
+```
+
+A composite proxy for answer accuracy that does not require calling an LLM. It combines:
+
+- **65% weight** on `entity_recall`
+- **35% weight** on a pattern score: presence of `def <entity>`, `<entity> =`, and bare entity substring matches in the compressed text
+
+The pattern score captures whether the compressed text contains definitional or assignment statements for the query entities — a useful signal for code-heavy contexts.
+
+**Range:** 0.0 – 1.0. Higher is better.
+
+---
+
+### Sustainability Estimates
+
+`sustainability_from_tokens_saved` converts tokens saved into illustrative GPU-seconds, watt-hours, and CO₂ using documented assumptions from `SustainabilityAssumptions`:
+
+| Constant | Value |
+|----------|-------|
+| `tokens_per_gpu_second` | 2 500 |
+| `gpu_watts` | 150 W |
+| `grid_kg_co2_per_kwh` | 0.417 kg CO₂/kWh (US grid average) |
+| `kv_share_of_prefill` | 55% |
+
+<Note>
+  These are **illustrative estimates, not per-deployment measurements.** Adjust `SustainabilityAssumptions` fields for your own hardware and grid region.
+</Note>
+
+---
+
+## Running Benchmarks Yourself
+
+All benchmark scripts are included in the repository and require only the `[dev]` extras:
+
+```bash
+# Regenerate web/assets/data/benchmarks.json (8-seed policy comparison)
+python scripts/benchmark_web.py
+
+# Generate SVG charts for the landing page
+python scripts/generate_charts.py
+
+# Run the full test suite (52 tests)
+pytest tests/ -q
+```
+
+Charts are written to `web/assets/img/chart-kv-savings.svg`, `chart-oracle-recall.svg`, and `chart-impact.svg`.
+
+---
+
+## Running a Custom Policy Comparison
+
+Use `compare_policies()` for a quick single-seed comparison, or `run_policy_benchmarks()` for the full multi-seed statistical run:
+
+```python
+from supercompress import compare_policies
+from supercompress.benchmarks.runner import run_policy_benchmarks
+
+# Single-context comparison
+context = open("my_long_context.txt").read()
+question = "What does the retry logic do on a 429 response?"
+
+results = compare_policies(context, question, budget_ratio=0.35)
+for name, result in results.items():
+    print(f"{name:20s}  {result.kv_savings_pct:.1f}% saved  {result.kept_tokens} tokens")
+
+# Full 8-seed statistical benchmark (returns summary dict + per-run rows)
+report = run_policy_benchmarks(seeds=8, budget_ratio=0.35)
+
+for policy_name, stats in report["summary"].items():
+    print(
+        f"{policy_name:20s}  "
+        f"oracle_recall={stats['avg_oracle_recall']:.2f}  "
+        f"entity_recall={stats['avg_entity_recall']:.2f}  "
+        f"latency={stats['avg_latency_ms']:.1f}ms"
+    )
+```
+
+The `run_policy_benchmarks` return value includes:
+- `summary` — per-policy averages for all metrics
+- `runs` — raw per-seed rows with full metric breakdowns
+- `headline` — top-level KV savings and quality numbers
+- `assumptions` — the `SustainabilityAssumptions` used for CO₂ estimates
+
+---
+
+## What the Benchmarks Claim and Don't Claim
+
+<CardGroup cols={2}>
+  <Card title="What we claim" icon="check">
+    - Learned CPU eviction beats truncation on oracle recall at similar KV savings
+    - Policy size is ~5K parameters — fits comfortably on any CPU
+    - Benchmarks and tests are fully reproducible from the public repository
+    - Environmental estimates use documented, adjustable assumptions
+  </Card>
+  <Card title="What we don't claim" icon="x">
+    - Live datacenter energy metering — CO₂ numbers use modeled assumptions
+    - That every workload matches the synthetic benchmark seeds
+    - Superiority on tasks outside the benchmark distribution
+    - Per-deployment measurement without adjusting `SustainabilityAssumptions`
+  </Card>
+</CardGroup>
+
+<Tip>
+  To test on your own workload, pass your own `lines` and `question` directly to `run_policy_benchmarks` by modifying the `generate_long_context` call in `runner.py`, or use `compare_policies()` with real context strings.
+</Tip>

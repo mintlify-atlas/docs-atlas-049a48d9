@@ -1,0 +1,123 @@
+---
+title: "POST /v1/compress — Authenticated Compression Endpoint"
+sidebarTitle: "POST /v1/compress"
+description: "Send context and a user query to POST /v1/compress with an sc_live_ API key. Returns compressed text, token counts, and KV-cache savings metrics."
+---
+
+The `/v1/compress` endpoint is the primary way to use SuperCompress from non-Python environments. Send a context string and a user query; receive a compressed version along with token counts and savings metrics. Every successful request is recorded against the API key used, so usage dashboards stay up to date automatically.
+
+## Request
+
+**Method:** `POST`  
+**Path:** `/v1/compress`  
+**Auth header:** `X-API-Key: sc_live_…` or `Authorization: Bearer sc_live_…`  
+**Content-Type:** `application/json`
+
+### Body parameters
+
+<ParamField body="context" type="string" required>
+  The full context to compress — for example, a retrieved document, conversation history, or code file. Maximum **120,000 characters**.
+</ParamField>
+
+<ParamField body="query" type="string" default="Summarize this context.">
+  The current user query. SuperCompress uses this to guide token retention, keeping content most relevant to the question. Maximum **2,000 characters**.
+</ParamField>
+
+<ParamField body="budget_ratio" type="float" default="0.35">
+  Fraction of tokens to retain. Must be between **0.05** and **1.0** inclusive. A value of `0.35` retains roughly 35 % of the original tokens, yielding up to 65 % KV-cache savings.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://your-api-host/v1/compress \
+  -H "X-API-Key: sc_live_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "context": "long document…",
+    "query": "Summarize this context.",
+    "budget_ratio": 0.35
+  }'
+```
+
+You can also authenticate via a bearer token:
+
+```bash
+curl -X POST https://your-api-host/v1/compress \
+  -H "Authorization: Bearer sc_live_YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"context": "long document…", "query": "Summarize this context.", "budget_ratio": 0.35}'
+```
+
+## Response
+
+A successful request returns HTTP **200** with a JSON object.
+
+<ResponseField name="compressed_text" type="string">
+  The compressed context ready to be inserted into your LLM prompt. Pass this in place of the original context.
+</ResponseField>
+
+<ResponseField name="original_tokens" type="integer">
+  Token count of the input context before compression.
+</ResponseField>
+
+<ResponseField name="kept_tokens" type="integer">
+  Token count of the compressed context after compression.
+</ResponseField>
+
+<ResponseField name="kv_savings_pct" type="float">
+  Percentage of tokens removed: `(1 − kept_tokens / original_tokens) × 100`. Rounded to two decimal places.
+</ResponseField>
+
+<ResponseField name="kept_line_ratio" type="float">
+  Share of input lines retained in the output, including sink lines and recent-context lines. Rounded to three decimal places.
+</ResponseField>
+
+<ResponseField name="policy_name" type="string">
+  Name of the compression policy that was applied, e.g. `"SuperCompress"` for the learned policy or `"H2O-fallback"` when the model falls back to a heuristic baseline.
+</ResponseField>
+
+<ResponseField name="budget_ratio" type="float">
+  The budget ratio that was used (echoes the request value, or the default `0.35` if omitted).
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "compressed_text": "## Introduction\nSuperCompress is a learned…",
+  "original_tokens": 4096,
+  "kept_tokens": 1433,
+  "kv_savings_pct": 65.01,
+  "kept_line_ratio": 0.342,
+  "policy_name": "SuperCompress",
+  "budget_ratio": 0.35
+}
+```
+
+## Usage tracking
+
+Every successful call to `/v1/compress` automatically increments the request count and token tallies for the API key used. View aggregated usage on the dashboard or via `GET /api/keys/{id}/usage`.
+
+<Note>
+Usage is recorded after compression succeeds. A `400` or `401` error response does not consume quota.
+</Note>
+
+## Error responses
+
+| Status | Cause |
+| ------ | ----- |
+| `400`  | Invalid request body (field out of range, context too large, etc.) |
+| `401`  | Missing, malformed, or revoked API key |
+
+## Unauthenticated playground
+
+`POST /api/compress` accepts the same `context`, `query`, and `budget_ratio` fields but requires no API key. It is intended for the browser playground and local smoke tests. It additionally supports a `compare` field:
+
+<ParamField body="compare" type="boolean" default="false">
+  When `true`, the response includes a `compare` map with results from every built-in policy (FIFO, Truncation, Summarization, H2O, and SuperCompress) run side-by-side.
+</ParamField>
+
+<Tip>
+Use `POST /api/compress` with `"compare": true` to benchmark SuperCompress against baseline policies on your own data before committing to an integration.
+</Tip>

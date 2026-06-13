@@ -1,0 +1,291 @@
+---
+title: "Key Management REST Endpoints for SuperCompress"
+sidebarTitle: "Key Management"
+description: "Create, rename, revoke, and inspect per-key usage for SuperCompress API keys. All endpoints require a Firebase ID token in the Authorization header."
+---
+
+The key management endpoints let you create and administer the API keys used to authenticate calls to `/v1/compress`. All six endpoints require a **Firebase ID token** — not an API key — because they operate on behalf of a signed-in user and are the same routes the dashboard UI calls.
+
+## Authentication
+
+All requests on this page must include:
+
+```
+Authorization: Bearer <firebase_id_token>
+```
+
+In dev mode (`SC_AUTH_DEV=1`) you can pass a synthetic token such as `dev:my-uid:me@dev.local` instead of a real Firebase token.
+
+---
+
+## GET /api/me
+
+Returns the Firebase uid and email address for the currently authenticated user. This is a lightweight liveness check for the auth layer and is also used by the dashboard on first load.
+
+### Example request
+
+```bash
+curl https://your-api-host/api/me \
+  -H "Authorization: Bearer <firebase_id_token>"
+```
+
+### Response fields
+
+<ResponseField name="uid" type="string">
+  The Firebase user ID.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  The email address associated with the Firebase account. May be `null` for anonymous or OAuth-only accounts.
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "uid": "Xk9mR3pLqZVt2nOeD7cF",
+  "email": "alice@example.com"
+}
+```
+
+---
+
+## GET /api/keys
+
+Lists all active (non-revoked) API keys for the authenticated user, together with a per-key usage summary.
+
+### Example request
+
+```bash
+curl https://your-api-host/api/keys \
+  -H "Authorization: Bearer <firebase_id_token>"
+```
+
+### Example response
+
+```json
+{
+  "keys": [
+    {
+      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "name": "Production",
+      "prefix": "sc_live_aBcDeFgH",
+      "created_at": "2024-11-01T10:00:00+00:00",
+      "last_used_at": "2024-11-15T14:32:01+00:00",
+      "revoked": false
+    }
+  ],
+  "usage": {
+    "3fa85f64-5717-4562-b3fc-2c963f66afa6": {
+      "total_requests": 142,
+      "total_tokens_in": 589000,
+      "total_tokens_out": 206150,
+      "total_tokens_saved": 382850,
+      "by_day": {
+        "2024-11-15": {
+          "key_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+          "requests": 12,
+          "tokens_in": 49200,
+          "tokens_out": 17220,
+          "tokens_saved": 31980
+        }
+      }
+    }
+  }
+}
+```
+
+---
+
+## POST /api/keys
+
+Creates a new API key for the authenticated user. Returns the key record and the full secret value. The secret is derived from a cryptographically random 24-byte token and is **shown only once** — it is not stored, only its SHA-256 hash is.
+
+### Body parameters
+
+<ParamField body="name" type="string" default="Production">
+  A human-readable label for the key. Maximum **80 characters**. Whitespace-only names are stored as `"Untitled key"`.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://your-api-host/api/keys \
+  -H "Authorization: Bearer <firebase_id_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Production"}'
+```
+
+### Example response
+
+```json
+{
+  "key": {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "name": "Production",
+    "prefix": "sc_live_aBcDeFgH",
+    "created_at": "2024-11-15T09:00:00+00:00",
+    "last_used_at": null,
+    "revoked": false
+  },
+  "secret": "sc_live_aBcDeFgHiJkLmNoPqRsTuVwXyZ012345"
+}
+```
+
+<Warning>
+The `secret` field contains the full `sc_live_…` key and is returned **exactly once**. Copy it to a secrets manager immediately. If you lose it, you must create a replacement key and revoke the old one.
+</Warning>
+
+---
+
+## PATCH /api/keys/{key_id}
+
+Renames an existing key. Only the display name is changed; the key secret, prefix, and usage history are unaffected.
+
+### Path parameter
+
+| Parameter | Type   | Description          |
+| --------- | ------ | -------------------- |
+| `key_id`  | string | UUID of the API key  |
+
+### Body parameters
+
+<ParamField body="name" type="string" required>
+  New display name. Between **1** and **80** characters. Whitespace-only values are ignored and the existing name is preserved.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X PATCH https://your-api-host/api/keys/3fa85f64-5717-4562-b3fc-2c963f66afa6 \
+  -H "Authorization: Bearer <firebase_id_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Staging"}'
+```
+
+### Example response
+
+```json
+{
+  "key": {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "name": "Staging",
+    "prefix": "sc_live_aBcDeFgH",
+    "created_at": "2024-11-15T09:00:00+00:00",
+    "last_used_at": "2024-11-15T14:32:01+00:00",
+    "revoked": false
+  }
+}
+```
+
+Returns `404` if the key does not exist or does not belong to the authenticated user.
+
+---
+
+## DELETE /api/keys/{key_id}
+
+Permanently revokes an API key. The key is immediately removed from the hash lookup index, so any in-flight requests using it will start failing with `401` within milliseconds.
+
+### Path parameter
+
+| Parameter | Type   | Description          |
+| --------- | ------ | -------------------- |
+| `key_id`  | string | UUID of the API key  |
+
+### Example request
+
+```bash
+curl -X DELETE https://your-api-host/api/keys/3fa85f64-5717-4562-b3fc-2c963f66afa6 \
+  -H "Authorization: Bearer <firebase_id_token>"
+```
+
+### Example response
+
+```json
+{
+  "key": {
+    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "name": "Production",
+    "prefix": "sc_live_aBcDeFgH",
+    "created_at": "2024-11-15T09:00:00+00:00",
+    "last_used_at": "2024-11-15T14:32:01+00:00",
+    "revoked": true
+  }
+}
+```
+
+<Note>
+Revocation is permanent and immediate. The key hash is removed from the lookup index, and the key record is marked `"revoked": true`. There is no undo — create a new key if access needs to be restored.
+</Note>
+
+Returns `404` if the key does not exist or does not belong to the authenticated user.
+
+---
+
+## GET /api/keys/{key_id}/usage
+
+Returns a usage snapshot for a single key, broken down by calendar day (UTC).
+
+### Path parameter
+
+| Parameter | Type   | Description          |
+| --------- | ------ | -------------------- |
+| `key_id`  | string | UUID of the API key  |
+
+### Example request
+
+```bash
+curl https://your-api-host/api/keys/3fa85f64-5717-4562-b3fc-2c963f66afa6/usage \
+  -H "Authorization: Bearer <firebase_id_token>"
+```
+
+### Response fields
+
+<ResponseField name="total_requests" type="integer">
+  Total number of successful `/v1/compress` calls made with this key.
+</ResponseField>
+
+<ResponseField name="total_tokens_in" type="integer">
+  Cumulative input token count across all requests (tokens before compression).
+</ResponseField>
+
+<ResponseField name="total_tokens_out" type="integer">
+  Cumulative output token count across all requests (tokens after compression).
+</ResponseField>
+
+<ResponseField name="total_tokens_saved" type="integer">
+  Cumulative tokens saved: `total_tokens_in − total_tokens_out`. This directly maps to KV-cache reduction.
+</ResponseField>
+
+<ResponseField name="by_day" type="object">
+  A map from UTC date strings (`"YYYY-MM-DD"`) to per-day usage records. Each record contains `key_id`, `requests`, `tokens_in`, `tokens_out`, and `tokens_saved` for that day.
+</ResponseField>
+
+### Example response
+
+```json
+{
+  "total_requests": 142,
+  "total_tokens_in": 589000,
+  "total_tokens_out": 206150,
+  "total_tokens_saved": 382850,
+  "by_day": {
+    "2024-11-14": {
+      "key_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "requests": 130,
+      "tokens_in": 539800,
+      "tokens_out": 188930,
+      "tokens_saved": 350870
+    },
+    "2024-11-15": {
+      "key_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "requests": 12,
+      "tokens_in": 49200,
+      "tokens_out": 17220,
+      "tokens_saved": 31980
+    }
+  }
+}
+```
+
+Returns `404` if the key does not exist or does not belong to the authenticated user.

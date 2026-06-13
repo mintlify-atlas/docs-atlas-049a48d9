@@ -1,0 +1,67 @@
+---
+title: "Installing SuperCompress in Your Python Project"
+sidebarTitle: "Installation"
+description: "Install SuperCompress from GitHub with pip — requires Python 3.10+ and PyTorch. Optional extras add dev tooling, a local HTTP server, and Firebase key storage."
+---
+
+SuperCompress is distributed directly from its GitHub repository. A single `pip install` pulls in the core library, its two runtime dependencies, and the pretrained checkpoint — no separate model download step is needed. Optional extras are available for development, running the local HTTP server, and production Firebase key storage.
+
+## Installation options
+
+Choose the install command that matches your use case:
+
+<CodeGroup>
+  ```bash From GitHub (recommended)
+  pip install git+https://github.com/arjunkshah/supercompress.git
+  ```
+
+  ```bash Dev + tests
+  pip install -e ".[dev,serve]"
+  ```
+
+  ```bash With Firebase
+  pip install -e ".[firebase]"
+  ```
+</CodeGroup>
+
+The first command is the standard install for production use. The `dev,serve` variant is for contributors or anyone who wants to run the local HTTP API server alongside the test suite. The `firebase` variant adds the `firebase-admin` SDK for production-grade API key storage.
+
+## Requirements
+
+| Requirement | Minimum version |
+|---|---|
+| Python | 3.10+ |
+| torch | 2.0.0+ |
+| numpy | 1.24.0+ |
+
+SuperCompress runs its eviction policy entirely on **CPU** before inference, so a GPU is not required. PyTorch is used to load and run the small (~5K-parameter) trained policy checkpoint bundled in `checkpoints/default.pt`.
+
+## Optional extras
+
+The following extras are declared in `pyproject.toml` and can be installed individually or together:
+
+| Extra | Packages | Use case |
+|---|---|---|
+| `dev` | pytest, ruff, httpx | Development & testing |
+| `serve` | fastapi, uvicorn, pydantic, httpx | Local HTTP server |
+| `firebase` | firebase-admin | Production key store |
+
+Install multiple extras at once by comma-separating them:
+
+```bash
+pip install -e ".[dev,serve,firebase]"
+```
+
+## Verify your installation
+
+After installing, confirm everything is working with a one-line import check:
+
+```python
+python -c "from supercompress import compress_context; print('SuperCompress ready')"
+```
+
+You should see `SuperCompress ready` printed without errors. If PyTorch or NumPy are missing you will see an `ImportError` — re-run the install command above to resolve it.
+
+<Note>
+  The trained checkpoint is included in the repository at **`checkpoints/default.pt`** and is loaded automatically by `compress_context()`. No separate download or environment variable is required. If the checkpoint file is missing (for example in a stripped clone), the library falls back gracefully to the `H2OPolicy` baseline and logs a warning.
+</Note>

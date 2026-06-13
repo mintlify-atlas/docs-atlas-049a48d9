@@ -1,0 +1,86 @@
+---
+title: "compare_policies() — Benchmark All Compression Policies"
+sidebarTitle: "compare_policies"
+description: "Run all five built-in compression policies on identical input and return per-policy CompressResult objects for benchmarking and comparison."
+---
+
+`compare_policies` is a benchmarking helper that runs all five built-in compression policies against the exact same `text` and `question`, then collects the results in a single dictionary. Because every policy operates on identical input at the same `budget_ratio`, the returned results are directly comparable: you can inspect token retention, KV-cache savings, and compressed output side-by-side without writing any loop yourself. Use this function when you are evaluating which policy best preserves answer quality for a given domain, or when you want to produce a comparison table for a demo or research experiment.
+
+## Function signature
+
+```python
+from supercompress import compare_policies
+
+results = compare_policies(
+    text: str,
+    question: str,
+    budget_ratio: float = 0.35,
+    checkpoint: Optional[str] = None,
+) -> dict[str, CompressResult]
+```
+
+## Policies compared
+
+`compare_policies` runs exactly five policies on every call:
+
+| Key | Policy | Description |
+|-----|---------|-------------|
+| `"FIFO"` | `FIFO` | Drops the oldest tokens first; keeps the most recent `budget` tokens. |
+| `"Truncation"` | `TruncationPolicy` | Head-and-tail truncation: keeps attention sinks plus the most recent tokens. |
+| `"Summarization"` | `SummarizationPolicy` | Extractive: keeps lines with the highest entity overlap with the question. |
+| `"H2O"` | `H2OPolicy` | Heavy Hitter Oracle: retains attention sinks, a recent window, and top cumulative-attention tokens. |
+| `"SuperCompress"` or `"H2O-fallback"` | `LearnedPolicy` or `H2OPolicy` | The trained learned policy from `checkpoint`. Falls back to H2O if no checkpoint is found. |
+
+## Parameters
+
+<ParamField path="text" type="str" required>
+  The full context string to compress. All five policies receive this exact string as input.
+</ParamField>
+
+<ParamField path="question" type="str" required>
+  The current user query. Used by all policies to drive relevance scoring, entity matching, and retention decisions.
+</ParamField>
+
+<ParamField path="budget_ratio" type="float" default="0.35">
+  Token retention fraction in `(0, 1]`. Applied uniformly across all five policies so that the results are directly comparable.
+</ParamField>
+
+<ParamField path="checkpoint" type="str" optional>
+  Path to a trained weights file for the `LearnedPolicy`. Defaults to the bundled `checkpoints/default.pt`. If the file is not found, the SuperCompress slot falls back to `H2OPolicy` and its key becomes `"H2O-fallback"`.
+</ParamField>
+
+## Returns
+
+<ResponseField name="results" type="dict[str, CompressResult]">
+  A dictionary mapping each policy name (string) to its [`CompressResult`](/api-reference/types#compressresult). The keys are exactly the policy names listed in the table above. Each value contains the full token statistics, compressed text, and savings percentage for that policy's run.
+</ResponseField>
+
+## Example
+
+```python
+from supercompress import compare_policies
+
+results = compare_policies(
+    text=long_context,
+    question="What does User.fetch return?",
+    budget_ratio=0.35,
+)
+
+for name, r in results.items():
+    print(f"{name:20s}: {r.kept_tokens}/{r.original_tokens} tokens  "
+          f"{r.kv_savings_pct:.1f}% KV saved")
+```
+
+<Tip>
+  Use `middle_truncation_failure_case()` to get a ready-made demo context where head-and-tail truncation loses a critical answer buried in the middle of the text. This makes it easy to see where `"Truncation"` fails while `"SuperCompress"` succeeds:
+
+  ```python
+  from supercompress import compare_policies, middle_truncation_failure_case
+
+  context, question = middle_truncation_failure_case()
+  results = compare_policies(context, question, budget_ratio=0.35)
+
+  for name, r in results.items():
+      print(f"{name:20s}: {r.kv_savings_pct:.1f}% saved")
+  ```
+</Tip>
