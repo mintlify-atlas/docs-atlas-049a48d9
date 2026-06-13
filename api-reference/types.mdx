@@ -1,5 +1,5 @@
 ---
-title: "SuperCompress Python Types and Data Classes"
+title: "SuperCompress Python Types — Dataclasses and Policies"
 sidebarTitle: "Types"
 description: "Reference for all public types exported by the supercompress package: CompressResult, LineAnnotation, SustainabilityEstimate, and EvictionPolicy."
 ---
@@ -51,7 +51,7 @@ from supercompress.benchmarks.metrics import SustainabilityEstimate, Sustainabil
 </ResponseField>
 
 <ResponseField name="kv_savings_pct" type="float">
-  **Computed property.** Percentage of KV-cache entries eliminated: `(1 − kept_tokens / original_tokens) × 100`. Returns `100.0` when `original_tokens` is zero to avoid division by zero.
+  **Computed property.** Percentage of KV-cache entries eliminated: `(1 − kept_tokens / max(original_tokens, 1)) × 100`. Uses `max(original_tokens, 1)` as a guard against division by zero when `original_tokens` is zero.
 </ResponseField>
 
 <ResponseField name="compression_ratio" type="float">

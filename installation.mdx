@@ -1,7 +1,7 @@
 ---
-title: "Installing SuperCompress in Your Python Project"
+title: "How to Install SuperCompress in Your Python Project"
 sidebarTitle: "Installation"
-description: "Install SuperCompress from GitHub with pip — requires Python 3.10+ and PyTorch. Optional extras add dev tooling, a local HTTP server, and Firebase key storage."
+description: "Install SuperCompress from GitHub with pip — requires Python 3.10+ and PyTorch. Optional extras add dev tooling, an HTTP server, and Firebase storage."
 ---
 
 SuperCompress is distributed directly from its GitHub repository. A single `pip install` pulls in the core library, its two runtime dependencies, and the pretrained checkpoint — no separate model download step is needed. Optional extras are available for development, running the local HTTP server, and production Firebase key storage.
@@ -51,6 +51,17 @@ Install multiple extras at once by comma-separating them:
 ```bash
 pip install -e ".[dev,serve,firebase]"
 ```
+
+## CLI entry points
+
+Installing SuperCompress registers two command-line scripts from `pyproject.toml`:
+
+| Command | Entry point | Purpose |
+|---|---|---|
+| `supercompress` | `supercompress.cli:main` | Run compression from the command line |
+| `supercompress-train` | `supercompress.cli:train_main` | Train or fine-tune the eviction policy |
+
+Both commands become available on your `PATH` immediately after installation with no additional setup.
 
 ## Verify your installation
 

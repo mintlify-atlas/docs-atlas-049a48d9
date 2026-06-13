@@ -12,7 +12,7 @@ The SuperCompress HTTP API exposes context compression and API key management ov
 
 Dashboard operations — listing and managing API keys, inspecting usage, and fetching user info — require a Firebase ID token obtained after signing in through Firebase Authentication. Pass the token in the `Authorization` header:
 
-```
+```http
 Authorization: Bearer <firebase_id_token>
 ```
 
@@ -22,13 +22,13 @@ In **dev mode** (`SC_AUTH_DEV=1`), the server accepts synthetic tokens of the fo
 
 The `/v1/compress` endpoint is protected by an API key. Keys are prefixed with `sc_live_` and can be passed in either of two ways:
 
-```
+```http
 X-API-Key: sc_live_YOUR_KEY
 ```
 
 or
 
-```
+```http
 Authorization: Bearer sc_live_YOUR_KEY
 ```
 
@@ -63,7 +63,7 @@ For Firebase setup details and production deployment steps, refer to the [API Da
 
 Set `SC_AUTH_DEV=1` to skip Firebase token verification. Pass a synthetic token instead:
 
-```
+```http
 Authorization: Bearer dev:my-uid:me@dev.local
 ```
 

@@ -1,7 +1,7 @@
 ---
-title: "Get Started with SuperCompress"
+title: "SuperCompress Quickstart: Compress Your First LLM Context"
 sidebarTitle: "Quickstart"
-description: "Install SuperCompress and compress your first LLM context in minutes — one function call, no API key required, runs entirely on CPU."
+description: "Install SuperCompress and run your first context compression in minutes — one function call, no API key, runs entirely on CPU before inference."
 ---
 
 SuperCompress is designed to slot into any Python LLM workflow with a single function call. This guide walks you from a fresh install to a working compression pipeline, and then shows you exactly why naive truncation fails on real agent context — and how SuperCompress handles it.
@@ -98,6 +98,40 @@ Expected output (results will vary slightly by seed):
 ```
 
 `compare_policies()` runs all five policies — FIFO, Truncation, Summarization, H2O, and SuperCompress — over the same context and returns a `dict[str, CompressResult]` so you can benchmark them side by side on your own data too.
+
+## Other exported functions
+
+SuperCompress exports two additional functions for common agent patterns.
+
+**`compress_for_turn`** accepts a list of context blocks (tool responses, memory chunks, prior turns) and merges them before compressing. Use it when your agent builds context from multiple sources:
+
+```python
+from supercompress import compress_for_turn
+
+compressed_text, result = compress_for_turn(
+    context_blocks=["tool response A…", "memory chunk B…", "prior turn C…"],
+    user_query="What did the tool return?",
+    budget_ratio=0.35,
+)
+# compressed_text is ready to pass to your LLM
+print(f"{result.kv_savings_pct:.1f}% KV saved")
+```
+
+**`compress_detailed`** returns the same `CompressResult` plus a list of `LineAnnotation` objects — one per input line — each carrying `line_index`, `text`, `kept` (bool), and `reason` (e.g. `"learned retention score"`, `"attention sink (always kept)"`). Use it when you need to inspect or visualize exactly which lines were evicted and why:
+
+```python
+from supercompress import compress_detailed
+
+result, annotations = compress_detailed(
+    "long context text…",
+    "What does fetch return when the row is missing?",
+    budget_ratio=0.35,
+)
+
+for ann in annotations:
+    status = "KEEP" if ann.kept else "DROP"
+    print(f"[{status}] line {ann.line_index}: {ann.reason}")
+```
 
 <Tip>
   The default `budget_ratio` of `0.35` keeps 35% of the original tokens. This is the value used in all published benchmarks. You can lower it for more aggressive compression or raise it toward `1.0` to preserve more context — just note that `budget_ratio` must be in the range `(0, 1]` or `compress_context` will raise a `ValueError`.

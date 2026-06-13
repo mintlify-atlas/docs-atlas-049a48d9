@@ -56,6 +56,10 @@ Passing an empty string — or a string that is only whitespace — never raises
 
 Returns a [`CompressResult`](/api-reference/types#compressresult) dataclass.
 
+<ResponseField name="original_text" type="str">
+  The full input context string before any eviction — identical to the `text` argument passed in.
+</ResponseField>
+
 <ResponseField name="compressed_text" type="str">
   The evicted-and-rejoined output text, ready to be passed directly to your LLM.
 </ResponseField>
@@ -69,7 +73,7 @@ Returns a [`CompressResult`](/api-reference/types#compressresult) dataclass.
 </ResponseField>
 
 <ResponseField name="kv_savings_pct" type="float">
-  Percentage of KV-cache entries eliminated: `(1 − kept / original) × 100`.
+  Percentage of KV-cache entries eliminated: `(1 − kept_tokens / max(original_tokens, 1)) × 100`. Uses `max(original_tokens, 1)` to prevent division by zero on empty input.
 </ResponseField>
 
 <ResponseField name="compression_ratio" type="float">

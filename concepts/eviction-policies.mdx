@@ -1,7 +1,7 @@
 ---
-title: "KV Eviction Policies in SuperCompress"
+title: "KV Cache Eviction Policies in SuperCompress Explained"
 sidebarTitle: "Eviction Policies"
-description: "Explore every eviction policy in SuperCompress — FIFO, Truncation, H2O, Summarization, the learned neural policy, and the theoretical Oracle upper bound."
+description: "SuperCompress eviction policies: FIFO, LRU, Truncation, H2O, SnapKV, Summarization, AttentionHeuristic, LearnedPolicy, and Oracle — with code examples."
 ---
 
 An eviction policy decides **which tokens to keep** when a context must be compressed to a fixed budget. In SuperCompress every policy implements the `EvictionPolicy` abstract base class from `policies.py`, which exposes a single method: `select(records, budget) → List[int]`. The method receives the full list of `TokenRecord` objects produced by `build_inference_records` and the integer token budget, and returns a sorted list of token position indices to retain. Policies range from stateless rules (FIFO, Truncation) to attention-informed heuristics (H2O, SnapKV) to the trained neural policy (LearnedPolicy) used by SuperCompress by default.
@@ -38,6 +38,48 @@ result = compress_context(
     "What does fetch return when the row is missing?",
     budget_ratio=0.35,
     policy=FIFO(),
+)
+print(result.compressed_text)
+```
+
+---
+
+## LRU
+
+**What it does:** `LRU` keeps the `budget` tokens with the highest position value (i.e. most recently seen), effectively behaving like a recency-ranked cache eviction. It scores every token by its `position` field and retains the top-ranked entries.
+
+**When to use it:** A lightweight alternative to `FIFO` when you want a position-sorted recency bias. Both policies share the same weakness: answer-bearing tokens buried in the middle of a long context are evicted regardless.
+
+```python
+from supercompress import compress_context
+from supercompress.policies import LRU
+
+result = compress_context(
+    long_context,
+    "What does fetch return when the row is missing?",
+    budget_ratio=0.35,
+    policy=LRU(),
+)
+print(result.compressed_text)
+```
+
+---
+
+## Sliding Window
+
+**What it does:** `SlidingWindow` always retains the first 5% of tokens as attention sinks, then fills the remaining budget with the most recent tokens. It is a fixed-window strategy that never considers the semantic content of middle tokens.
+
+**When to use it:** A step up from pure FIFO for contexts where early structural context (imports, schema definitions) is worth preserving alongside the most recent content. Still unsuitable for long agentic sessions where answers are scattered throughout.
+
+```python
+from supercompress import compress_context
+from supercompress.policies import SlidingWindow
+
+result = compress_context(
+    long_context,
+    "What is the default timeout value?",
+    budget_ratio=0.35,
+    policy=SlidingWindow(),
 )
 print(result.compressed_text)
 ```
@@ -112,6 +154,48 @@ print(f"{result.kv_savings_pct:.1f}% KV saved")
 
 ---
 
+## Attention Heuristic
+
+**What it does:** `AttentionHeuristicPolicy` is a non-learned baseline that keeps the `budget` tokens with the highest `attention_mass` values. Unlike H2O it does not carve out explicit sink or recency pools — it ranks all tokens purely by their synthesized attention weight and takes the top-k.
+
+**When to use it:** Useful for ablation studies to isolate how much of H2O's or LearnedPolicy's gain comes from attention-mass scoring alone, before adding recency and entity-match signals.
+
+```python
+from supercompress import compress_context
+from supercompress.policies import AttentionHeuristicPolicy
+
+result = compress_context(
+    long_context,
+    "What does fetch return when the row is missing?",
+    budget_ratio=0.35,
+    policy=AttentionHeuristicPolicy(),
+)
+print(f"{result.kv_savings_pct:.1f}% KV saved · {result.kept_tokens}/{result.original_tokens} tokens")
+```
+
+---
+
+## SnapKV
+
+**What it does:** `SnapKVPolicy` implements a SnapKV-style strategy from [Li et al.](https://arxiv.org/abs/2404.14469). It scores prefix tokens by their attention from an observation window near the end of the sequence, retaining the `sink_tokens` most important prefix positions plus the top-scoring remaining tokens by `snapkv_score` (falling back to `attention_mass`).
+
+**When to use it:** When you want a prefix-focused heuristic that mirrors how recent query tokens attend back to earlier context — a useful baseline for retrieval-heavy prompts.
+
+```python
+from supercompress import compress_context
+from supercompress.policies import SnapKVPolicy
+
+result = compress_context(
+    long_context,
+    "Which commit introduced the regression?",
+    budget_ratio=0.35,
+    policy=SnapKVPolicy(sink_tokens=4),
+)
+print(result.compressed_text)
+```
+
+---
+
 ## SuperCompress (Learned Policy)
 
 **What it does:** `LearnedPolicy` runs the `EvictionPolicyNetwork` — a ~5K-parameter MLP with the architecture `Linear(9→64) → LayerNorm → GELU → Linear(64→64) → GELU → Linear(64→1)`. For each token it computes a sigmoid keep-score over the 9-dimensional feature vector from `build_feature_tensor`. The top-`budget` tokens by score are retained. The model runs on CPU in well under 1 ms.
@@ -132,9 +216,25 @@ print(result.compressed_text)
 print(f"{result.kv_savings_pct:.1f}% KV saved · {result.kept_tokens}/{result.original_tokens} tokens")
 ```
 
+---
+
+## Oracle
+
+**What it does:** `OraclePolicy` is the theoretical upper bound. It keeps all tokens flagged as `is_oracle_important` (ground-truth labels derived from the source text) and then fills the remaining budget with the most recent tokens. It cannot be used at inference time because oracle labels are unknown before generation.
+
+**When to use it:** Benchmarking only — to establish the ceiling that all learned and heuristic policies are measured against.
+
 <Note>
   `OraclePolicy` is reserved for benchmarking only — it uses ground-truth `is_oracle_important` labels that are unavailable at inference time. Never use it in production.
 </Note>
+
+```python
+from supercompress.benchmarks.runner import run_policy_benchmarks
+
+# OraclePolicy is included automatically in benchmark runs
+report = run_policy_benchmarks(seeds=8, budget_ratio=0.35)
+print(report["summary"])
+```
 
 ---
 

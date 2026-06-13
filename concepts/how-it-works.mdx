@@ -1,5 +1,5 @@
 ---
-title: "How SuperCompress Compresses LLM Context"
+title: "How SuperCompress Compresses LLM Context: Pipeline Guide"
 sidebarTitle: "How It Works"
 description: "A technical walkthrough of SuperCompress's learned KV eviction pipeline — from tokenization and feature extraction to budget-constrained token selection."
 ---
@@ -10,15 +10,19 @@ SuperCompress reduces the token count of a long context before it ever reaches y
 
 <Steps>
   <Step title="Tokenize + Feature Extraction (CPU)">
-    The raw context string is split into lines, then each line is tokenized with a simple whitespace-and-punctuation splitter. For every token, `build_inference_records` in `local.py` builds a `TokenRecord` containing a **9-dimensional feature vector**:
+    The raw context string is split into lines, then each line is tokenized with a simple whitespace-and-punctuation splitter. For every token, `build_inference_records` in `local.py` builds a `TokenRecord` containing a **9-dimensional feature vector** (`FEATURE_DIM = 9` in `features.py`):
 
     | Dim | Feature |
     |-----|---------|
     | 0 | `attention_mass` — synthesized attention weight for this token |
     | 1 | `layer_attention_mean` — mean attention across simulated layers |
-    | 2 | `recency` — normalized position (`1 - age / seq_len`) |
+    | 2 | `recency` — `1 − (seq_len − 1 − position) / seq_len`; 1.0 for the most recent token, ~0.0 for the oldest |
     | 3 | `question_entity_match` — 1.0 if token appears in extracted question entities |
-    | 4–7 | Semantic type one-hot: `CODE`, `COMMENT`, `CHAT`, `BOILERPLATE` |
+    | 4 | Semantic one-hot: `CODE` |
+    | 5 | Semantic one-hot: `COMMENT` |
+    | 6 | Semantic one-hot: `CHAT` |
+    | 7 | Semantic one-hot: `BOILERPLATE` |
+    | 8 | Reserved (always 0) |
 
     This stage runs entirely on CPU with no HuggingFace model download required.
   </Step>

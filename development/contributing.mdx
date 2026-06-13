@@ -1,5 +1,5 @@
 ---
-title: "Contributing to SuperCompress"
+title: "Contributing to the SuperCompress Open-Source Library"
 sidebarTitle: "Contributing"
 description: "Set up a local dev environment, run the 52-test suite, lint with Ruff, and learn how the codebase is organised before sending a PR."
 ---
@@ -100,7 +100,7 @@ Each CI run executes the following steps in order:
 3. **Export browser model** — `python scripts/export_model_json.py`
 4. **Pytest** — `pytest tests/ -q`
 5. **Benchmark JSON** — `python scripts/benchmark_web.py`
-6. **Verify web assets** — asserts that `model.json`, `benchmarks.json`, `compress-engine.js`, `chart-kv-savings.svg`, `chart-impact.svg`, and `launch.mp4` all exist under `web/assets/`
+6. **Verify web assets** — asserts that `web/assets/data/model.json`, `web/assets/data/benchmarks.json`, `web/assets/js/compress-engine.js`, `web/assets/img/chart-kv-savings.svg`, `web/assets/img/chart-impact.svg`, and `web/assets/video/launch.mp4` all exist
 
 <Info>
   CI does not run `generate_charts.py` because SVG generation depends on matplotlib and the chart files are committed to the repository. The verify step only checks that the committed files are present.

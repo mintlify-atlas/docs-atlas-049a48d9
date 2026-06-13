@@ -1,7 +1,7 @@
 ---
 title: "Training and Exporting the SuperCompress Checkpoint"
 sidebarTitle: "Training"
-description: "Re-train the ~5K-param EvictionPolicyNetwork, export weights for the browser demo, and regenerate benchmarks and charts."
+description: "Re-train the ~5K-param EvictionPolicyNetwork, export its weights to JSON for the browser demo, and regenerate benchmarks and charts."
 ---
 
 SuperCompress ships with a pretrained checkpoint at `checkpoints/default.pt` so you can run compression immediately after install. When you want to experiment with the eviction policy itself — tweaking the training data, the network architecture, or the feature set — you can re-train the `EvictionPolicyNetwork` from scratch. The model is deliberately small (~5K parameters) so a fast training run completes in around 30 seconds on CPU.

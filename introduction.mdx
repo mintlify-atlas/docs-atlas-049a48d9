@@ -27,6 +27,22 @@ SuperCompress achieves 100% oracle recall — meaning it never loses the answer 
 
 At 1 million compressions (estimated): **~800M tokens avoided · 29 kWh · 12 kg CO₂ saved**. See `docs/ENVIRONMENT.md` for the full methodology.
 
+## Public API
+
+SuperCompress exposes seven public symbols from `supercompress`:
+
+| Symbol | Kind | Purpose |
+|---|---|---|
+| `compress_context` | function | Compress one text blob for a given question and budget |
+| `compress_for_turn` | function | Merge multiple context blocks, then compress before a turn |
+| `compress_detailed` | function | Compress with per-line `LineAnnotation` keep/drop reasoning |
+| `compare_policies` | function | Run FIFO, Truncation, Summarization, H2O, and SuperCompress side by side |
+| `middle_truncation_failure_case` | function | Build the canonical synthetic context that defeats head-and-tail truncation |
+| `CompressResult` | dataclass | Return type of every compress function — holds the trimmed text, token counts, and savings metrics |
+| `LineAnnotation` | dataclass | Per-line annotation returned by `compress_detailed` — holds `kept`, `reason`, and `line_index` |
+
+Installing the package also registers two CLI entry points: **`supercompress`** (run compression from the shell) and **`supercompress-train`** (train or fine-tune the eviction policy). Both require Python 3.10 or newer.
+
 ## Where to go next
 
 <CardGroup cols={2}>

@@ -1,7 +1,7 @@
 ---
-title: "API Dashboard: Keys, Auth, and Usage Tracking"
+title: "API Dashboard: Manage Keys, Auth, and Usage Tracking"
 sidebarTitle: "API Dashboard"
-description: "Create API keys, track token usage per key, and authenticate requests against the SuperCompress compress endpoint."
+description: "Create and revoke SuperCompress API keys, monitor per-key token usage, and authenticate requests against the hosted compress endpoint."
 ---
 
 The SuperCompress API dashboard lets you sign up, create and revoke API keys, and monitor per-key usage — tokens in, tokens out, and tokens saved — across every compression call your application makes. In local dev mode you can run the full dashboard without any cloud configuration; in production it backs onto Firebase Auth and Firestore.
@@ -101,9 +101,9 @@ Pass `Authorization: Bearer <firebase_id_token>` on every request.
 | `GET` | `/api/me` | Return the current authenticated user's UID and email |
 | `GET` | `/api/keys` | List all keys and per-key usage summary |
 | `POST` | `/api/keys` | Create a key — body: `{ "name": "Production" }` |
-| `PATCH` | `/api/keys/{id}` | Rename a key — body: `{ "name": "New name" }` |
-| `DELETE` | `/api/keys/{id}` | Revoke a key permanently |
-| `GET` | `/api/keys/{id}/usage` | Usage snapshot for a single key |
+| `PATCH` | `/api/keys/{key_id}` | Rename a key — body: `{ "name": "New name" }` |
+| `DELETE` | `/api/keys/{key_id}` | Revoke a key permanently |
+| `GET` | `/api/keys/{key_id}/usage` | Usage snapshot for a single key |
 
 ### Authenticated compression (API key)
 

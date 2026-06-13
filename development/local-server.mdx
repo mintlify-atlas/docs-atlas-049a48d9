@@ -1,7 +1,7 @@
 ---
-title: "Run the SuperCompress Local Development Server"
+title: "Run the SuperCompress Local FastAPI Development Server"
 sidebarTitle: "Local Server"
-description: "Spin up a local FastAPI server to serve the browser demo, playground, /v1/compress, and /dashboard without a Vercel deployment."
+description: "Spin up a local FastAPI server to test the SuperCompress browser demo, playground, /v1/compress, and /dashboard without a Vercel deployment."
 ---
 
 The local development server is a FastAPI application that replicates the full SuperCompress web surface on your machine — the browser demo, the `/dashboard` for API-key management, the unauthenticated `/api/compress` playground, and the authenticated `/v1/compress` endpoint. It is intentionally separate from the public Vercel site, which performs all compression client-side in the browser and never calls a backend.
@@ -75,7 +75,7 @@ curl -X POST http://127.0.0.1:8790/api/compress \
   -d '{"context": "long text…", "query": "What does fetch return?", "budget_ratio": 0.35, "compare": true}'
 ```
 
-The response includes `compressed_text`, `original_tokens`, `kept_tokens`, `kv_savings_pct`, `line_annotations`, and — when `compare: true` — a `compare` map keyed by policy name.
+The response includes `compressed_text`, `original_tokens`, `kept_tokens`, `kv_savings_pct`, `kept_line_ratio`, `policy_name`, `budget_ratio`, `line_annotations`, and — when `compare: true` — a `compare` map keyed by policy name.
 
 <Tip>
   Set `budget_ratio` between `0.05` and `1.0`. A value of `0.35` keeps roughly 35 % of the original tokens, yielding ~65 % KV savings in typical workloads.

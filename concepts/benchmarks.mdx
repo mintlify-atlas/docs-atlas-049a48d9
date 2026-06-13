@@ -1,5 +1,5 @@
 ---
-title: "SuperCompress Benchmark Results and Methodology"
+title: "SuperCompress Benchmark Results, Metrics, and Methodology"
 sidebarTitle: "Benchmarks"
 description: "Benchmark results, metric definitions, and step-by-step instructions for reproducing or extending SuperCompress's policy comparisons on your own data."
 ---
@@ -74,9 +74,16 @@ The pattern score captures whether the compressed text contains definitional or 
 
 ---
 
-### Sustainability Estimates
+### `sustainability_from_tokens_saved`
 
-`sustainability_from_tokens_saved` converts tokens saved into illustrative GPU-seconds, watt-hours, and CO₂ using documented assumptions from `SustainabilityAssumptions`:
+```python
+def sustainability_from_tokens_saved(
+    tokens_saved: int,
+    assumptions: SustainabilityAssumptions | None = None,
+) -> SustainabilityEstimate:
+```
+
+Converts tokens saved into illustrative GPU-seconds, watt-hours, and CO₂ using documented assumptions from `SustainabilityAssumptions`. Pass a custom `SustainabilityAssumptions` instance to override any constant for your hardware or grid region.
 
 | Constant | Value |
 |----------|-------|
